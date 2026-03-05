@@ -165,6 +165,8 @@ typedef struct {
     char genre[32];
     int  year;
     char st[N_STATUS];
+    char name_lc[128]; /* pre-computed lowercase for fast search */
+    char genre_lc[32]; /* pre-computed lowercase for fast search */
 } Game;
 
 typedef enum {
@@ -410,35 +412,145 @@ static TTF_Font     *f22=NULL,*f18=NULL,*f14=NULL,*f12=NULL;
 static SDL_Cursor   *cur_arr=NULL,*cur_ns=NULL,*cur_ew=NULL,
                     *cur_nwse=NULL,*cur_nesw=NULL;
 
+/* ── Background effect textures ──────────────────────────────── */
+static SDL_Texture *grain_tex = NULL;   /* static film-grain overlay  */
+static SDL_Texture *blob_tex  = NULL;   /* soft radial gradient blob  */
+#define GRAIN_SZ   256  /* tiled noise texture size                   */
+#define BLOB_TEX_R 256  /* internal blob texture half-size            */
+#define BLOB_TEX_SZ (BLOB_TEX_R*2)
+
+static void bg_init(void){
+    /* ── Grain: random noise tiled at low opacity ── */
+    grain_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                                  SDL_TEXTUREACCESS_STATIC, GRAIN_SZ, GRAIN_SZ);
+    if(grain_tex){
+        Uint32 *px = (Uint32*)malloc(GRAIN_SZ*GRAIN_SZ*sizeof(Uint32));
+        if(px){
+            Uint32 rng = 0xDEADBEEF;
+            for(int i=0;i<GRAIN_SZ*GRAIN_SZ;i++){
+                rng = rng*1664525u + 1013904223u;
+                Uint8 v = (rng>>24) & 0xFF;
+                Uint8 a = (Uint8)(v * 0.09f);
+                px[i] = ((Uint32)255<<24)|((Uint32)255<<16)|((Uint32)255<<8)|a;
+            }
+            SDL_UpdateTexture(grain_tex, NULL, px, GRAIN_SZ*sizeof(Uint32));
+            free(px);
+        }
+        SDL_SetTextureBlendMode(grain_tex, SDL_BLENDMODE_BLEND);
+    }
+
+    /* ── Blob: normalised white radial gradient, scaled at draw time ── */
+    blob_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                                 SDL_TEXTUREACCESS_STATIC, BLOB_TEX_SZ, BLOB_TEX_SZ);
+    if(blob_tex){
+        Uint32 *px = (Uint32*)malloc(BLOB_TEX_SZ*BLOB_TEX_SZ*sizeof(Uint32));
+        if(px){
+            float rf = (float)BLOB_TEX_R;
+            for(int y=0;y<BLOB_TEX_SZ;y++){
+                for(int x=0;x<BLOB_TEX_SZ;x++){
+                    float dx=(float)(x-BLOB_TEX_R), dy=(float)(y-BLOB_TEX_R);
+                    float d = sqrtf(dx*dx+dy*dy)/rf;
+                    if(d>=1.f){px[y*BLOB_TEX_SZ+x]=0;continue;}
+                    /* soft Gaussian falloff */
+                    float g = expf(-2.8f*d*d);
+                    Uint8 a = (Uint8)(g*255.f);
+                    px[y*BLOB_TEX_SZ+x] = 0xFFFFFF00|a;
+                }
+            }
+            SDL_UpdateTexture(blob_tex, NULL, px, BLOB_TEX_SZ*sizeof(Uint32));
+            free(px);
+        }
+        SDL_SetTextureBlendMode(blob_tex, SDL_BLENDMODE_BLEND);
+    }
+}
+
+static void bg_free(void){
+    if(grain_tex){ SDL_DestroyTexture(grain_tex); grain_tex=NULL; }
+    if(blob_tex) { SDL_DestroyTexture(blob_tex);  blob_tex=NULL;  }
+}
+
+static void sc_(C4 c);     /* forward declaration */
+static void fblend(int x,int y,int w,int h,C4 c); /* forward declaration */
+
+/* Draw blob centred at (cx,cy), radius r px, scaled to window */
+static void draw_blob(int cx, int cy, int r, float opacity){
+    if(!blob_tex) return;
+    C4 ac = C_ACC;
+    SDL_SetTextureColorMod(blob_tex, ac.r, ac.g, ac.b);
+    SDL_SetTextureAlphaMod(blob_tex, (Uint8)(opacity*255.f));
+    SDL_Rect dst = { cx-r, cy-r, r*2, r*2 };
+    SDL_RenderCopy(ren, blob_tex, NULL, &dst);
+}
+
+static void draw_background(void){
+    sc_(C_BG); SDL_RenderClear(ren);
+
+    /* Blobs scale with window size — radius ~55% of the shorter dimension */
+    int base = (win_w < win_h ? win_w : win_h);
+    int r1 = (int)(base * 0.70f);   /* top-right  — biggest  */
+    int r2 = (int)(base * 0.58f);   /* bot-left   — medium   */
+    int r3 = (int)(base * 0.42f);   /* centre     — small    */
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    draw_blob(win_w,          0,              r1, 0.82f);
+    draw_blob(0,              win_h,          r2, 0.65f);
+    draw_blob(win_w*55/100,   win_h*50/100,   r3, 0.40f);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+
+    /* Grain overlay — tiled */
+    if(grain_tex){
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        for(int ty=0;ty<win_h;ty+=GRAIN_SZ)
+            for(int tx=0;tx<win_w;tx+=GRAIN_SZ){
+                SDL_Rect dst={tx,ty,GRAIN_SZ,GRAIN_SZ};
+                SDL_RenderCopy(ren, grain_tex, NULL, &dst);
+            }
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    }
+}
+
 /* ═══════════════════════ Audio / SFX ═══════════════════════════ */
 static SDL_AudioDeviceID aud_dev=0;
 
+/* Deferred save — avoids a file write on every rapid button click */
+static void save_d(void); /* forward declaration */
+static Uint32 save_pending_at = 0;  /* ticks when last toggle dirtied the save */
+#define SAVE_DEFER_MS 500           /* write 500 ms after the last change */
+static void save_defer(void){ save_pending_at = SDL_GetTicks(); }
+static void save_flush(void){ if(save_pending_at){ save_d(); save_pending_at=0; } }
+
 #define SFX_RATE 44100
 
-static void sfx_play(float freq,float dur,float vol,float decay){
-    if(!aud_dev) return;
-    int n=(int)(SFX_RATE*dur);
-    Sint16 *buf=(Sint16*)malloc(n*sizeof(Sint16));
-    if(!buf) return;
-    for(int i=0;i<n;i++){
-        float t=(float)i/SFX_RATE;
-        float env=expf(-t*decay);
-        float s=sinf(2.f*(float)M_PI*freq*t)*env*vol*32767.f;
-        if(s> 32767.f) s= 32767.f;
-        if(s<-32767.f) s=-32767.f;
-        buf[i]=(Sint16)s;
+/* Pre-baked SFX buffers — generated once at startup, reused on every play */
+typedef struct { Sint16 *buf; int n; } SfxBuf;
+static SfxBuf sfx_click_buf, sfx_toggle_buf, sfx_tab_buf,
+              sfx_type_buf,  sfx_sort_buf;
+
+static SfxBuf sfx_bake(float freq, float dur, float vol, float decay){
+    SfxBuf b; b.n = (int)(SFX_RATE * dur);
+    b.buf = (Sint16*)malloc(b.n * sizeof(Sint16));
+    if(!b.buf){ b.n=0; return b; }
+    for(int i = 0; i < b.n; i++){
+        float t = (float)i / SFX_RATE;
+        float s = sinf(2.f*(float)M_PI*freq*t) * expf(-t*decay) * vol * 32767.f;
+        if(s >  32767.f) s =  32767.f;
+        if(s < -32767.f) s = -32767.f;
+        b.buf[i] = (Sint16)s;
     }
-    SDL_QueueAudio(aud_dev,buf,n*sizeof(Sint16));
-    free(buf);
+    return b;
+}
+static void sfx_queue(SfxBuf b){
+    if(!aud_dev || !b.buf) return;
+    SDL_QueueAudio(aud_dev, b.buf, b.n * sizeof(Sint16));
 }
 
 /* Cooldown timestamps — one per sfx category */
 static Uint32 sfx_last_click=0, sfx_last_toggle=0, sfx_last_tab=0, sfx_last_type=0, sfx_last_sort=0;
-static void sfx_click (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_click <60)  return; sfx_last_click =now; sfx_play( 900.f,0.055f,0.10f,45.f); }
-static void sfx_toggle(void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_toggle<80)  return; sfx_last_toggle=now; sfx_play( 660.f,0.075f,0.14f,35.f); }
-static void sfx_tab   (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_tab  <50)  return; sfx_last_tab   =now; sfx_play(1100.f,0.045f,0.08f,55.f); }
-static void sfx_type  (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_type <30)  return; sfx_last_type  =now; sfx_play(1400.f,0.025f,0.04f,80.f); }
-static void sfx_sort  (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_sort <200) return; sfx_last_sort  =now; sfx_play(1100.f,0.045f,0.08f,55.f); }
+static void sfx_click (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_click <60)  return; sfx_last_click =now; sfx_queue(sfx_click_buf);  }
+static void sfx_toggle(void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_toggle<30)  return; sfx_last_toggle=now; sfx_queue(sfx_toggle_buf); }
+static void sfx_tab   (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_tab  <50)  return; sfx_last_tab   =now; sfx_queue(sfx_tab_buf);    }
+static void sfx_type  (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_type <30)  return; sfx_last_type  =now; sfx_queue(sfx_type_buf);   }
+static void sfx_sort  (void){ Uint32 now=SDL_GetTicks(); if(now-sfx_last_sort <200) return; sfx_last_sort  =now; sfx_queue(sfx_sort_buf);   }
 
 /* ── Forward declarations ─────────────────────────────────────── */
 static void rebuild(void);
@@ -485,15 +597,25 @@ static void frr_aa(int x,int y,int w,int h,int r,C4 c){
         int rx = x + w - 1 - r + dxi;
         sc_(c);
         if(rx >= lx){
-            SDL_RenderDrawLine(ren, lx, y+row,       rx, y+row);
-            SDL_RenderDrawLine(ren, lx, y+h-1-row,   rx, y+h-1-row);
+            SDL_RenderDrawLine(ren, lx, y+row,     rx, y+row);
+            SDL_RenderDrawLine(ren, lx, y+h-1-row, rx, y+h-1-row);
         }
-        C4 aa=c; aa.a=(Uint8)(c.a*frac);
-        sc_(aa);
+        /* 1st AA pixel – partial edge coverage */
+        C4 aa1=c; aa1.a=(Uint8)(c.a*frac);
+        sc_(aa1);
         SDL_RenderDrawPoint(ren, lx-1, y+row);
         SDL_RenderDrawPoint(ren, rx+1, y+row);
         SDL_RenderDrawPoint(ren, lx-1, y+h-1-row);
         SDL_RenderDrawPoint(ren, rx+1, y+h-1-row);
+        /* 2nd AA pixel – feathered falloff for smoother edge */
+        Uint8 a2=(Uint8)(c.a*frac*frac*0.30f);
+        if(a2>1){
+            C4 aa2=c; aa2.a=a2; sc_(aa2);
+            SDL_RenderDrawPoint(ren, lx-2, y+row);
+            SDL_RenderDrawPoint(ren, rx+2, y+row);
+            SDL_RenderDrawPoint(ren, lx-2, y+h-1-row);
+            SDL_RenderDrawPoint(ren, rx+2, y+h-1-row);
+        }
     }
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
 }
@@ -511,29 +633,104 @@ static void fblend(int x,int y,int w,int h,C4 c){
     sc_(c); SDL_Rect r={x,y,w,h}; SDL_RenderFillRect(ren,&r);
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
 }
-static void rtx(TTF_Font *f,const char *s,int x,int y,C4 c){
-    if(!f||!s||!*s) return;
-    SDL_Color col={c.r,c.g,c.b,c.a};
-    SDL_Surface *sf=TTF_RenderUTF8_Blended(f,s,col); if(!sf) return;
+/* ═══════════════════════ Text Texture Cache ════════════════════
+   Strings are rendered once as white and cached by (font, string).
+   Colour is applied at draw-time via SDL_SetTextureColorMod so
+   the same cached texture works for every colour variant.
+   Eliminates per-frame Surface/Texture alloc+free (was ~150/frame).
+   ════════════════════════════════════════════════════════════════ */
+#define TC_SLOTS  2048          /* must be power of two             */
+#define TC_MASK   (TC_SLOTS-1)
+#define TC_PROBE  16            /* max linear-probe steps           */
+#define TC_KEYLEN 192
+
+typedef struct {
+    char        key[TC_KEYLEN];
+    TTF_Font   *font;           /* NULL = empty slot                */
+    SDL_Texture*tex;
+    int         w, h;
+    Uint32      lru;
+} TxEntry;
+
+static TxEntry  tc_pool[TC_SLOTS];
+static Uint32   tc_clock = 0;
+
+static Uint32 tc_hash(TTF_Font *f, const char *s){
+    Uint32 h = (Uint32)(uintptr_t)f * 2654435761u;
+    while(*s) h = h*31u + (unsigned char)*s++;
+    return h;
+}
+
+/* Returns a cached white texture for (font, string), creating it if needed. */
+static TxEntry *tc_get(TTF_Font *f, const char *s){
+    if(!f||!s||!*s) return NULL;
+    Uint32 start = tc_hash(f,s) & TC_MASK;
+
+    /* 1. Search probe window for existing entry or first empty slot */
+    int empty_slot = -1;
+    for(int i=0;i<TC_PROBE;i++){
+        int idx=(int)((start+i) & TC_MASK);
+        TxEntry *e=&tc_pool[idx];
+        if(!e->font){ if(empty_slot<0) empty_slot=idx; break; }
+        if(e->font==f && strncmp(e->key,s,TC_KEYLEN-1)==0){
+            e->lru=++tc_clock; return e;
+        }
+    }
+
+    /* 2. Need to insert — find slot: empty if available, else evict oldest in window */
+    int slot = empty_slot;
+    if(slot<0){
+        Uint32 oldest=UINT32_MAX;
+        for(int i=0;i<TC_PROBE;i++){
+            int idx=(int)((start+i) & TC_MASK);
+            if(tc_pool[idx].lru < oldest){ oldest=tc_pool[idx].lru; slot=idx; }
+        }
+        SDL_DestroyTexture(tc_pool[slot].tex);
+        tc_pool[slot].font=NULL;
+    }
+
+    /* 3. Render as white (colour applied at draw time via ColorMod) */
+    SDL_Color white={255,255,255,255};
+    SDL_Surface *sf=TTF_RenderUTF8_Blended(f,s,white); if(!sf) return NULL;
     SDL_Texture *tx=SDL_CreateTextureFromSurface(ren,sf);
-    SDL_Rect d={x,y,sf->w,sf->h}; SDL_RenderCopy(ren,tx,NULL,&d);
-    SDL_DestroyTexture(tx); SDL_FreeSurface(sf);
+    SDL_SetTextureBlendMode(tx,SDL_BLENDMODE_BLEND);
+    TxEntry *e=&tc_pool[slot];
+    strncpy(e->key,s,TC_KEYLEN-1); e->key[TC_KEYLEN-1]=0;
+    e->font=f; e->tex=tx; e->w=sf->w; e->h=sf->h; e->lru=++tc_clock;
+    SDL_FreeSurface(sf);
+    return e;
+}
+
+static void tc_free_all(void){
+    for(int i=0;i<TC_SLOTS;i++)
+        if(tc_pool[i].font){ SDL_DestroyTexture(tc_pool[i].tex); tc_pool[i].font=NULL; }
+}
+
+/* ── Drawing helpers (use cache) ─────────────────────────────── */
+static void rtx(TTF_Font *f,const char *s,int x,int y,C4 c){
+    TxEntry *e=tc_get(f,s); if(!e) return;
+    SDL_SetTextureColorMod(e->tex,c.r,c.g,c.b);
+    SDL_SetTextureAlphaMod(e->tex,c.a);
+    SDL_Rect d={x,y,e->w,e->h}; SDL_RenderCopy(ren,e->tex,NULL,&d);
 }
 static void rtxclip(TTF_Font *f,const char *s,int x,int y,int mw,C4 c){
-    if(!f||!s||!*s||mw<=0) return;
-    SDL_Color col={c.r,c.g,c.b,c.a};
-    SDL_Surface *sf=TTF_RenderUTF8_Blended(f,s,col); if(!sf) return;
-    SDL_Texture *tx=SDL_CreateTextureFromSurface(ren,sf);
-    int tw=sf->w,th=sf->h; SDL_FreeSurface(sf);
-    SDL_Rect src={0,0,tw<mw?tw:mw,th},dst={x,y,src.w,src.h};
-    SDL_RenderCopy(ren,tx,&src,&dst); SDL_DestroyTexture(tx);
+    if(mw<=0) return;
+    TxEntry *e=tc_get(f,s); if(!e) return;
+    SDL_SetTextureColorMod(e->tex,c.r,c.g,c.b);
+    SDL_SetTextureAlphaMod(e->tex,c.a);
+    int cw=e->w<mw?e->w:mw;
+    SDL_Rect src={0,0,cw,e->h},dst={x,y,cw,e->h};
+    SDL_RenderCopy(ren,e->tex,&src,&dst);
 }
 static int txw_(TTF_Font *f,const char *s){
-    int w=0,h=0; if(f&&s) TTF_SizeUTF8(f,s,&w,&h); return w;
+    TxEntry *e=tc_get(f,s); return e?e->w:0;
 }
 static void rtxcen(TTF_Font *f,const char *s,int rx,int ry,int rw,int rh,C4 c){
-    int w=txw_(f,s),h=f?TTF_FontHeight(f):0;
-    rtx(f,s,rx+(rw-w)/2,ry+(rh-h)/2,c);
+    TxEntry *e=tc_get(f,s); if(!e) return;
+    SDL_SetTextureColorMod(e->tex,c.r,c.g,c.b);
+    SDL_SetTextureAlphaMod(e->tex,c.a);
+    int x=rx+(rw-e->w)/2, y=ry+(rh-e->h)/2;
+    SDL_Rect d={x,y,e->w,e->h}; SDL_RenderCopy(ren,e->tex,NULL,&d);
 }
 
 /* ═══════════════════════ Genre colours ════════════════════════ */
@@ -675,7 +872,7 @@ static int anim_tick(void){
 #define SETTLE(val,tgt,spd) do{     float _d=(tgt)-(val);     if(fabsf(_d)<0.0015f){(val)=(tgt);}     else{(val)+= _d*(spd); busy=1;} }while(0)
 
     /* ── Scroll ── */
-    { float sp=1.f-powf(0.00008f,dt_); SETTLE(scr_f,scr_tgt,sp); }
+    { float sp=1.f-powf(0.00004f,dt_); SETTLE(scr_f,scr_tgt,sp); }
 
     /* ── Grid hover detection ── */
     if(view_mode==VIEW_GRID){
@@ -704,7 +901,7 @@ static int anim_tick(void){
 
     /* ── Row hover – only visible entries ── */
     {
-        float hs=clampf(dt_*22.f,0.f,1.f);
+        float hs=clampf(dt_*40.f,0.f,1.f);
         int first = page_first();
         int last  = page_last();
 
@@ -723,7 +920,7 @@ static int anim_tick(void){
 
     /* ── Button flash fade (only non-zero entries) ── */
     {
-        float bd=dt_*3.5f;
+        float bd=dt_*5.0f;
         for(int i=0;i<ndb;i++)
             for(int j=0;j<N_STATUS;j++)
                 if(btn_fl[i][j]>0.f){
@@ -735,7 +932,7 @@ static int anim_tick(void){
 
     /* ── Tab pill ── */
     {
-        float slide=clampf(dt_*20.f,0.f,1.f);
+        float slide=clampf(dt_*30.f,0.f,1.f);
         tab_itx=(float)TAB_X_((int)cur_tab);
         if(rz_drag||win_drag){ tab_ix=tab_itx; }
         else { SETTLE(tab_ix,tab_itx,slide); }
@@ -747,7 +944,7 @@ static int anim_tick(void){
     {
         int mx,my; SDL_GetMouseState(&mx,&my);
         int has_focus=(SDL_GetWindowFlags(win)&SDL_WINDOW_MOUSE_FOCUS)!=0;
-        float bs=1.f-powf(0.001f,dt_);
+        float bs=1.f-powf(0.0004f,dt_);
         float c_tgt=(has_focus&&my<TITLE_H&&IN_BTN(mx,TB_CX))?1.f:0.f;
         float m_tgt=(has_focus&&my<TITLE_H&&IN_BTN(mx,TB_MX))?1.f:0.f;
         float n_tgt=(has_focus&&my<TITLE_H&&IN_BTN(mx,TB_NX))?1.f:0.f;
@@ -755,7 +952,7 @@ static int anim_tick(void){
     }
 
     /* ── Theme ring slide ── */
-    SETTLE(sel_ring_if,(float)cur_theme,clampf(dt_*20.f,0.f,1.f));
+    SETTLE(sel_ring_if,(float)cur_theme,clampf(dt_*30.f,0.f,1.f));
 
     /* ── Theme colour transition + dot animations ── */
     tick_theme(dt_);
@@ -763,14 +960,14 @@ static int anim_tick(void){
     {
         int mx2,my2; SDL_GetMouseState(&mx2,&my2);
         int mf=(SDL_GetWindowFlags(win)&SDL_WINDOW_MOUSE_FOCUS)!=0;
-        float ths=1.f-powf(0.002f,dt_);
+        float ths=1.f-powf(0.0008f,dt_);
         for(int i=0;i<N_THEMES;i++){
             float tg=(mf&&hit_theme_dot(mx2,my2)==i)?1.f:0.f;
             SETTLE(tdot_hov[i],tg,ths);
         }
         for(int i=0;i<N_THEMES;i++){
             if(tdot_bounce[i]>0.f){
-                tdot_bounce[i]-=dt_*5.5f;
+                tdot_bounce[i]-=dt_*8.0f;
                 if(tdot_bounce[i]<0.f) tdot_bounce[i]=0.f;
                 busy=1;
             }
@@ -778,7 +975,7 @@ static int anim_tick(void){
         if(theme_pulse>0.f){theme_pulse-=dt_*4.f;if(theme_pulse<0)theme_pulse=0; busy=1;}
 
         /* ── Sort/view button hover ── */
-        float ths2=1.f-powf(0.003f,dt_);
+        float ths2=1.f-powf(0.001f,dt_);
         int mx3,my3; SDL_GetMouseState(&mx3,&my3);
         int hf2=(SDL_GetWindowFlags(win)&SDL_WINDOW_MOUSE_FOCUS)!=0;
         for(int i=0;i<4;i++){
@@ -793,7 +990,7 @@ static int anim_tick(void){
         }
 
         /* ── Button hover (skip entries already at target) ── */
-        float bspd=1.f-powf(0.0004f,dt_);
+        float bspd=1.f-powf(0.00015f,dt_);
         int hov_gi=-1,hov_bj=-1;
         if(view_mode==VIEW_LIST){
             int hov_ri2=row_at(mx2,my2);
@@ -859,7 +1056,7 @@ static int anim_tick(void){
     {
         int mx2,my2; SDL_GetMouseState(&mx2,&my2);
         int py=PG_BAR_Y, ph=PG_H;
-        float spd=1.f-powf(0.003f,dt_);
+        float spd=1.f-powf(0.001f,dt_);
         int bw=80,bh=34,cy2=py+(ph-TTF_FontHeight(f14)-6)/2;
         int prev_x=14, next_x_=win_w-14-bw;
         int in_bar=(my2>=py&&my2<py+ph);
@@ -897,7 +1094,7 @@ static int anim_tick(void){
             }
             #undef MD2
         }
-        SETTLE(page_slide,(float)cur_page,clampf(dt_*14.f,0.f,1.f));
+        SETTLE(page_slide,(float)cur_page,clampf(dt_*22.f,0.f,1.f));
         if(fabsf(page_slide-(float)cur_page)>0.001f) busy=1;
     }
 
@@ -1150,6 +1347,12 @@ static int search_score(const char *name_l, const char *genre_l,
 /* scored filter index */
 static int  flt_score[MAX_G];
 
+/* qsort comparators for rebuild() */
+static int cmp_flt_az (const void *a,const void *b){ return strcasecmp(db[*(int*)a].name,db[*(int*)b].name); }
+static int cmp_flt_za (const void *a,const void *b){ return strcasecmp(db[*(int*)b].name,db[*(int*)a].name); }
+static int cmp_flt_new(const void *a,const void *b){ return db[*(int*)b].year - db[*(int*)a].year; }
+static int cmp_flt_old(const void *a,const void *b){ return db[*(int*)a].year - db[*(int*)b].year; }
+
 static void rebuild(void){
     nflt=0;
     char ql[128]; int qlen=(int)strlen(srch);
@@ -1158,10 +1361,7 @@ static void rebuild(void){
     for(int i=0;i<ndb;i++){
         if(cur_tab!=T_ALL&&!db[i].st[(int)cur_tab-1]) continue;
         if(qlen>0){
-            char nl[128], gl[32];
-            strlower(db[i].name, nl,128);
-            strlower(db[i].genre,gl, 32);
-            int s=search_score(nl,gl,ql,qlen);
+            int s=search_score(db[i].name_lc,db[i].genre_lc,ql,qlen);
             if(s==0) continue;
             flt_score[nflt]=s;
         } else {
@@ -1182,21 +1382,13 @@ static void rebuild(void){
             flt[b+1]=ki; flt_score[b+1]=ks;
         }
     } else {
-    /* apply sort to flt[] */
-    if(sort_mode==SORT_ZA){
-        for(int a=0;a<nflt-1;a++) for(int b=a+1;b<nflt;b++)
-            if(strcasecmp(db[flt[a]].name,db[flt[b]].name)<0){int t=flt[a];flt[a]=flt[b];flt[b]=t;}
-    } else if(sort_mode==SORT_AZ){
-        for(int a=0;a<nflt-1;a++) for(int b=a+1;b<nflt;b++)
-            if(strcasecmp(db[flt[a]].name,db[flt[b]].name)>0){int t=flt[a];flt[a]=flt[b];flt[b]=t;}
-    } else if(sort_mode==SORT_NEW){
-        for(int a=0;a<nflt-1;a++) for(int b=a+1;b<nflt;b++)
-            if(db[flt[a]].year<db[flt[b]].year){int t=flt[a];flt[a]=flt[b];flt[b]=t;}
-    } else if(sort_mode==SORT_OLD){
-        for(int a=0;a<nflt-1;a++) for(int b=a+1;b<nflt;b++)
-            if(db[flt[a]].year>db[flt[b]].year){int t=flt[a];flt[a]=flt[b];flt[b]=t;}
+        switch(sort_mode){
+        case SORT_AZ:  qsort(flt,nflt,sizeof(int),cmp_flt_az);  break;
+        case SORT_ZA:  qsort(flt,nflt,sizeof(int),cmp_flt_za);  break;
+        case SORT_NEW: qsort(flt,nflt,sizeof(int),cmp_flt_new); break;
+        case SORT_OLD: qsort(flt,nflt,sizeof(int),cmp_flt_old); break;
+        }
     }
-    } /* end else (no query) */
     scr_f=0.f; scr_tgt=0.f;
     clamp_page();
 }
@@ -1361,7 +1553,7 @@ static void draw_tbbtn(TBBtnType type, int cx2, float ht){
 
 static void draw_titlebar_dots(void);
 static void draw_titlebar(void){
-    fr_(0,0,win_w,TITLE_H,C_TITLE);
+    { C4 c=C_TITLE; c.a=175; fblend(0,0,win_w,TITLE_H,c); }
     {
         C4 tl=C_ACC; tl.a=120;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
@@ -1441,7 +1633,7 @@ static void draw_titlebar(void){
 
 /* ── Header ───────────────────────────────────────────────────── */
 static void draw_hdr(void){
-    fr_(0,HDR_Y,win_w,HDR_H,C_HDR);
+    { C4 c=C_HDR; c.a=160; fblend(0,HDR_Y,win_w,HDR_H,c); }
     rtx(f22,"GAME CATALOGUE",18,HDR_Y+(HDR_H-TTF_FontHeight(f22))/2,C_TXT);
 
     C4 bc=s_on?C_ACC:C_SEP;
@@ -1594,7 +1786,7 @@ static void draw_titlebar_dots(void){
 /* ── Tabs ─────────────────────────────────────────────────────── */
 static void draw_tabs(void){
     int tw=TAB_W_;
-    fr_(0,TAB_Y,win_w,TAB_H,C_TBAR);
+    { C4 c=C_TBAR; c.a=165; fblend(0,TAB_Y,win_w,TAB_H,c); }
 
     {
         int ix=(int)tab_ix;
@@ -1628,11 +1820,19 @@ static void draw_row(int ri, int ay){
 
     frr_aa(4,ay+3,lw-8,ROW_H-6,7,lerpc((ri%2==0)?C_ROWA:C_ROWB,C_ROWH,ht));
 
-    rtxclip(f18,g->name,NM_X,ay+(ROW_H-TTF_FontHeight(f18))/2,NM_MW_,
+    int fh18=TTF_FontHeight(f18), fh12=TTF_FontHeight(f12);
+
+    /* Name — single line, vertically centred */
+    rtxclip(f18,g->name,NM_X,ay+(ROW_H-fh18)/2,NM_MW_,
             lerpc(C_TXT,MK4(255,255,255,255),ht*0.4f));
 
+    /* Year + genre stacked, centred as a block in the year column */
     char yr[8]; sprintf(yr,"%d",g->year);
-    rtxcen(f12,yr,YR_X_,ay+(ROW_H-TTF_FontHeight(f12))/2,YR_W,TTF_FontHeight(f12),C_SUB);
+    int yr_block_h = fh12 + 2 + fh12;
+    int yr_y    = ay + (ROW_H - yr_block_h) / 2;
+    int genre_y = yr_y + fh12 + 2;
+    rtxcen(f12,yr,       YR_X_,yr_y,    YR_W,fh12,C_SUB);
+    rtxcen(f12,g->genre, YR_X_,genre_y, YR_W,fh12,lerpc(C_DIM,C_SUB,ht*0.5f));
 
     int bby=ay+BTN_YO;
     for(int j=0;j<N_STATUS;j++){
@@ -1958,7 +2158,7 @@ static void draw_grid(void){
     int lh=LST_H_;
     SDL_Rect clip={0,LST_Y,win_w,lh};
     SDL_RenderSetClipRect(ren,&clip);
-    fr_(0,LST_Y,LIST_W_,lh,C_BG);
+    { C4 c=C_BG; c.a=145; fblend(0,LST_Y,LIST_W_,lh,c); }
 
     int cols=grid_cols();
     int block_w=cols*(GRID_W+GRID_GAP)-GRID_GAP;
@@ -1993,7 +2193,7 @@ static void draw_list(void){
     int lh=LST_H_;
     SDL_Rect clip={0,LST_Y,win_w,lh};
     SDL_RenderSetClipRect(ren,&clip);
-    fr_(0,LST_Y,LIST_W_,lh,C_BG);
+    { C4 c=C_BG; c.a=145; fblend(0,LST_Y,LIST_W_,lh,c); }
     int first=page_first(), last=page_last();
     for(int r=first;r<=last;r++)
         draw_row(r, LST_Y+LIST_TOP_PAD+(r-first)*ROW_H);
@@ -2007,7 +2207,7 @@ static void draw_list(void){
 
 /* ── Status bar ───────────────────────────────────────────────── */
 static void draw_sbar(void){
-    fr_(0,win_h-SB_H,win_w,SB_H,C_SBAR);
+    { C4 c=C_SBAR; c.a=170; fblend(0,win_h-SB_H,win_w,SB_H,c); }
     /* top separator */
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
     C4 sep3={C_ACC.r,C_ACC.g,C_ACC.b,25}; sc_(sep3);
@@ -2094,6 +2294,8 @@ static void init_db(void){
         strncpy(db[i].name, GDB[i].n,127); db[i].name[127]=0;
         strncpy(db[i].genre,GDB[i].g, 31); db[i].genre[31]=0;
         db[i].year=GDB[i].y; memset(db[i].st,0,N_STATUS);
+        strlower(db[i].name, db[i].name_lc, 128);
+        strlower(db[i].genre,db[i].genre_lc, 32);
     }
     ndb=lim;
     qsort(db,ndb,sizeof(Game),cmp_game);
@@ -2133,6 +2335,13 @@ int main(int argc,char **argv){
         if(aud_dev) SDL_PauseAudioDevice(aud_dev,0);
     }
 
+    /* Bake all SFX tones once so clicks never stall the render thread */
+    sfx_click_buf  = sfx_bake( 900.f,0.055f,0.10f,45.f);
+    sfx_toggle_buf = sfx_bake( 660.f,0.075f,0.14f,35.f);
+    sfx_tab_buf    = sfx_bake(1100.f,0.045f,0.08f,55.f);
+    sfx_type_buf   = sfx_bake(1400.f,0.025f,0.04f,80.f);
+    sfx_sort_buf   = sfx_bake(1100.f,0.045f,0.08f,55.f);
+
     f22=load_font(22); f18=load_font(18);
     f14=load_font(14); f12=load_font(12);
     if(!f22||!f18||!f14||!f12){
@@ -2147,6 +2356,7 @@ int main(int argc,char **argv){
     cur_nesw = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
 
     init_save_path(); init_db(); load_d(); rebuild();
+    bg_init();
 
     /* Snap pill indicators to loaded state */
     sort_ind_f=(float)sort_mode;
@@ -2169,10 +2379,16 @@ int main(int argc,char **argv){
         /* If nothing is animating, block until next event (saves CPU).
            Use a 50ms timeout so blink/spin still wake up when active. */
         if(!needs_redraw){
-            SDL_WaitEventTimeout(&ev, 16);
+            if(SDL_WaitEventTimeout(&ev, 16)){
+                SDL_PushEvent(&ev); /* put it back — PollEvent handles it below */
+            }
         }
 
         needs_redraw = anim_tick();
+
+        /* Flush deferred save once the debounce window has passed */
+        if(save_pending_at && SDL_GetTicks()-save_pending_at >= SAVE_DEFER_MS)
+            save_flush();
 
         if(!rz_drag&&!win_drag&&!drag_sb){
             int mx,my; SDL_GetMouseState(&mx,&my);
@@ -2339,7 +2555,7 @@ int main(int argc,char **argv){
                         int r=row_at(mx,my);
                         if(r>=0){
                             int b=btn_at(mx,my,r);
-                            if(b>=0){ int gi=flt[r]; db[gi].st[b]^=1; sfx_toggle(); btn_fl[gi][b]=1; rebuild(); save_d(); }
+                            if(b>=0){ int gi=flt[r]; db[gi].st[b]^=1; sfx_toggle(); btn_fl[gi][b]=1; rebuild(); save_defer(); }
                         }
                     } else {
                         if(hov_db>=0){
@@ -2364,7 +2580,7 @@ int main(int argc,char **argv){
                                         int bx=bx02+j*(GBSZ+GBGP);
                                         if(mx>=bx&&mx<bx+GBSZ){
                                             db[hov_db].st[j]^=1; sfx_toggle();
-                                            btn_fl[hov_db][j]=1; rebuild(); save_d();
+                                            btn_fl[hov_db][j]=1; rebuild(); save_defer();
                                             break;
                                         }
                                     }
@@ -2399,7 +2615,29 @@ int main(int argc,char **argv){
                     SDL_SetCursor(cur_arr);
                 }
                 hov_db=-1;
-                int r=row_at(mx,my); if(r>=0) hov_db=flt[r];
+                if(view_mode==VIEW_GRID){
+                    if(my>=LST_Y&&my<LST_Y+LST_H_&&mx>=0&&mx<LIST_W_){
+                        int cols=grid_cols();
+                        int block_w=cols*(GRID_W+GRID_GAP)-GRID_GAP;
+                        int ox=(LIST_W_-block_w)/2;
+                        int pg_cnt2=page_last()-page_first()+1;
+                        int rows_pg=(pg_cnt2+cols-1)/cols; if(rows_pg<1) rows_pg=1;
+                        int used_h2=rows_pg*(GRID_H+GRID_GAP)-GRID_GAP;
+                        int oy2=LST_Y+(LST_H_-used_h2)/2; if(oy2<LST_Y) oy2=LST_Y;
+                        int row2=(my-oy2)/(GRID_H+GRID_GAP);
+                        int col2=(mx-ox)/(GRID_W+GRID_GAP);
+                        if(col2>=0&&col2<cols&&row2>=0){
+                            int local=row2*cols+col2;
+                            int ri=page_first()+local;
+                            int cy2=oy2+row2*(GRID_H+GRID_GAP);
+                            int cx2=ox+col2*(GRID_W+GRID_GAP);
+                            if(mx>=cx2&&mx<cx2+GRID_W&&my>=cy2&&my<cy2+GRID_H&&ri<=page_last()&&ri<nflt)
+                                hov_db=flt[ri];
+                        }
+                    }
+                } else {
+                    int r=row_at(mx,my); if(r>=0) hov_db=flt[r];
+                }
                 hsb=(mx>=LIST_W_&&mx<win_w&&my>=LST_Y&&my<LST_Y+LST_H_);
                 if(win_drag){
                     int gx,gy; SDL_GetGlobalMouseState(&gx,&gy);
@@ -2522,7 +2760,7 @@ int main(int argc,char **argv){
         }
 
         if(needs_redraw || rz_drag || win_drag || drag_sb || srch_drag){
-            sc_(C_BG); SDL_RenderClear(ren);
+            draw_background();
             draw_titlebar();
             draw_hdr();
             draw_tabs();
@@ -2532,13 +2770,18 @@ int main(int argc,char **argv){
         }
     }
 
+    save_flush(); /* write any pending deferred save */
     save_d();
+    tc_free_all();
     if(aud_dev) SDL_CloseAudioDevice(aud_dev);
+    free(sfx_click_buf.buf); free(sfx_toggle_buf.buf); free(sfx_tab_buf.buf);
+    free(sfx_type_buf.buf);  free(sfx_sort_buf.buf);
     TTF_CloseFont(f22); TTF_CloseFont(f18);
     TTF_CloseFont(f14); TTF_CloseFont(f12);
     TTF_Quit();
     SDL_FreeCursor(cur_arr); SDL_FreeCursor(cur_ns); SDL_FreeCursor(cur_ew);
     SDL_FreeCursor(cur_nwse); SDL_FreeCursor(cur_nesw);
+    bg_free();
     SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
 }
