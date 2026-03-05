@@ -50,3 +50,6 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Allow the installer in docs
+!docs/GameCatalogue-Setup-Latest.exe
