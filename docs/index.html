@@ -136,6 +136,28 @@
   .blob-2 { width: 500px; height: 500px; background: var(--accent);  bottom: -150px; left: -100px; opacity: 0.10; }
   .blob-3 { width: 350px; height: 350px; background: var(--accent);  top: 45%; left: 40%; opacity: 0.08; }
 
+  /* ── GALAXY THEME — canvas background + nebula overrides ── */
+  #galaxy-bg {
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 0;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  body.theme-galaxy #galaxy-bg { opacity: 1; }
+
+  /* hide regular blobs & replace with galaxy-coloured ones */
+  body.theme-galaxy .blob-1 { background: #7820d0; opacity: 0.20; top: -200px; right: -150px; width: 700px; height: 700px; }
+  body.theme-galaxy .blob-2 { background: #c01888; opacity: 0.13; bottom: -150px; left: -100px; }
+  body.theme-galaxy .blob-3 { background: #1840c8; opacity: 0.10; top: 45%; left: 40%; }
+  .blob-galaxy-extra {
+    display: none; position: fixed; border-radius: 50%;
+    filter: blur(140px); pointer-events: none; z-index: 0;
+  }
+  body.theme-galaxy .blob-galaxy-extra {
+    display: block; width: 320px; height: 320px;
+    background: #b450ff; top: -80px; left: 35%; opacity: 0.14;
+  }
+
   /* ── NAV ── */
   nav {
     position: fixed; top: 0; left: 0; right: 0;
@@ -795,6 +817,8 @@
 <div class="blob blob-1"></div>
 <div class="blob blob-2"></div>
 <div class="blob blob-3"></div>
+<div class="blob-galaxy-extra"></div>
+<canvas id="galaxy-bg"></canvas>
 
 <!-- NAV -->
 <!-- TUTORIAL — v1.0: remove the <span class="nav-beta">Beta</span> element below -->
@@ -1179,6 +1203,8 @@ const THEMES = [
     wp:{title:'#090307',hdr:'#0d040a',tbar:'#160811',rowA:'rgba(30,10,24,.85)',rowB:'rgba(24,8,19,.85)',rowH:'rgba(50,18,40,.9)',acc:'#e63ca0',txt:'#f5dcee',sub:'#a0648c',sep:'rgba(26,10,21,.6)',srch:'#180a14'} },
   { name:'NORD',    ac:'#88c0d0', bg:'#12141c',surface:'#1e202c',border:'#1e202e',text:'#eceff4',muted:'#828ca0',accent:'#88c0d0',
     wp:{title:'#0a0c11',hdr:'#0e1016',tbar:'#161820',rowA:'rgba(30,32,44,.85)',rowB:'rgba(26,28,38,.85)',rowH:'rgba(46,50,68,.9)',acc:'#88c0d0',txt:'#eceff4',sub:'#828ca0',sep:'rgba(30,32,46,.6)',srch:'#1a1c28'} },
+  { name:'GALAXY',  ac:'#b450ff', bg:'#03020c',surface:'#050312',border:'#020108',text:'#ebdcff',muted:'#785aaa',accent:'#b450ff',
+    wp:{title:'#020108',hdr:'#050312',tbar:'#080518',rowA:'rgba(10,6,28,.85)',rowB:'rgba(8,5,22,.85)',rowH:'rgba(20,12,52,.9)',acc:'#b450ff',txt:'#ebdcff',sub:'#785aaa',sep:'rgba(12,6,34,.6)',srch:'#0a051e'} },
 ];
 
 const N = THEMES.length;
@@ -1217,6 +1243,7 @@ let curTheme     = 0;
 let sel_ring_if  = 0.0;              // float ring position, lerps to curTheme
 const tdot_bounce= new Float32Array(N); // per-dot bounce [0..1], decays
 const tdot_hov   = new Float32Array(N); // per-dot hover brightness
+let galaxy_dot_f = 0.0;              // 0..1 — animates in when Galaxy selected
 
 let rafId = null, prevTs = null;
 
@@ -1264,29 +1291,64 @@ function drawDots() {
     const bn  = tdot_bounce[i];
     const hf  = tdot_hov[i];
     const yoff = bn > 0 ? -Math.sin(bn * Math.PI) * 5 : 0;
-
     const dc = parseCol(THEMES[i].ac);
 
-    // Hover ring (for non-selected dots)
+    // Galaxy extra effects — drawn behind base dot, fully scaled by gf
+    if (i === N-1 && galaxy_dot_f > 0.15) {
+      const gf = galaxy_dot_f;
+      // outer nebula haze
+      const hr = DOT_R + 2 + Math.floor(gf * 4);
+      const grad = ctx.createRadialGradient(cx, CY+yoff, DOT_R, cx, CY+yoff, hr);
+      grad.addColorStop(0, `rgba(180,60,255,${gf*0.32})`);
+      grad.addColorStop(1, `rgba(180,60,255,0)`);
+      ctx.beginPath();
+      ctx.arc(cx, CY+yoff, hr, 0, Math.PI*2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      // tight glow ring
+      ctx.beginPath();
+      ctx.arc(cx, CY+yoff, DOT_R+1, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(230,120,255,${gf*(110+hf*60)/255})`;
+      ctx.fill();
+      // diffraction spikes
+      const sd = DOT_R + 1 + Math.floor(gf * 3);
+      const spAlpha = gf * 0.9;
+      const drawSpike = (x1,y1,x2,y2,a) => {
+        ctx.strokeStyle = `rgba(255,210,255,${a})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      };
+      drawSpike(cx, CY+yoff-DOT_R, cx, CY+yoff-sd, spAlpha);
+      drawSpike(cx, CY+yoff+DOT_R, cx, CY+yoff+sd, spAlpha);
+      drawSpike(cx-DOT_R, CY+yoff, cx-sd, CY+yoff, spAlpha);
+      drawSpike(cx+DOT_R, CY+yoff, cx+sd, CY+yoff, spAlpha);
+      // fade tips
+      drawSpike(cx, CY+yoff-sd, cx, CY+yoff-sd-1, spAlpha*0.45);
+      drawSpike(cx, CY+yoff+sd, cx, CY+yoff+sd+1, spAlpha*0.45);
+      drawSpike(cx-sd, CY+yoff, cx-sd-1, CY+yoff, spAlpha*0.45);
+      drawSpike(cx+sd, CY+yoff, cx+sd+1, CY+yoff, spAlpha*0.45);
+    }
+
+    // Base dot — always at DOT_R, same for every dot
     if (hf > 0.02 && i !== curTheme) {
       ctx.beginPath();
       ctx.arc(cx, CY + yoff, DOT_R + 1, 0, Math.PI*2);
       ctx.fillStyle = `rgba(${dc[0]},${dc[1]},${dc[2]},${(hf*90)/255})`;
       ctx.fill();
     }
-
-    // Dot body — brightness 0.45 + 0.55*hf (mirrors main.c)
     const br = 0.45 + 0.55 * hf;
     ctx.beginPath();
     ctx.arc(cx, CY + yoff, DOT_R, 0, Math.PI*2);
     ctx.fillStyle = `rgb(${Math.round(dc[0]*br)},${Math.round(dc[1]*br)},${Math.round(dc[2]*br)})`;
     ctx.fill();
 
-    // White center dot on selected — frr_aa(cx-2, cy+yoff-2, 4, 4, 2, {255,255,255,180})
+    // White centre on selected
     if (i === curTheme) {
+      const wr = (i === N-1) ? 2 + Math.floor(galaxy_dot_f) : 2;
+      const wa = 170 + (i === N-1 ? galaxy_dot_f*40 : 10);
       ctx.beginPath();
-      ctx.arc(cx, CY + yoff, 2, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(255,255,255,${180/255})`;
+      ctx.arc(cx, CY + yoff, wr, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(255,255,255,${wa/255})`;
       ctx.fill();
     }
   }
@@ -1334,6 +1396,7 @@ function applySlots(cols) {
 function isSettled() {
   if (tc_t < 1.0) return false;
   if (Math.abs(sel_ring_if - curTheme) > 0.001) return false;
+  if (Math.abs(galaxy_dot_f - (curTheme === N-1 ? 1 : 0)) > 0.001) return false;
   for (let i = 0; i < N; i++) {
     if (tdot_bounce[i] > 0.001) return false;
     if (tdot_hov[i] > 0.001) return false;
@@ -1364,6 +1427,14 @@ function tick(ts) {
     }
   }
 
+  // 4. Galaxy dot animation — fast exponential settle (mirrors main.c powf(0.00005,dt))
+  {
+    const tgt = curTheme === N-1 ? 1.0 : 0.0;
+    const spd = 1 - Math.pow(0.00005, dt);
+    galaxy_dot_f += (tgt - galaxy_dot_f) * spd;
+    if (Math.abs(galaxy_dot_f - tgt) < 0.001) galaxy_dot_f = tgt;
+  }
+
   // 4. Redraw canvas every frame
   drawDots();
 
@@ -1388,6 +1459,7 @@ function setTheme(idx) {
   tc_t     = 0.0;
   tdot_bounce[idx] = 1.0;   // trigger bounce on clicked dot
   curTheme = idx;
+  document.body.classList.toggle('theme-galaxy', idx === N-1);
   ensureLoop();
   showToast(THEMES[idx].name);
 }
@@ -1408,6 +1480,100 @@ tc_from  = liveCols.map(c=>[...c]);
 tc_to    = [...tc_from];
 applySlots(liveCols);
 drawDots();
+
+// ── Galaxy background canvas ──────────────────────────────────────
+(function initGalaxyBg() {
+  const gc = document.getElementById('galaxy-bg');
+  const gx = gc.getContext('2d');
+
+  function resize() {
+    gc.width  = window.innerWidth;
+    gc.height = window.innerHeight;
+    renderGalaxy();
+  }
+
+  // Seeded PRNG — same LCG as main.c bg_init
+  function lcg(seed) {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0xffffffff; };
+  }
+
+  function renderGalaxy() {
+    const W = gc.width, H = gc.height;
+    gx.clearRect(0, 0, W, H);
+
+    const rng = lcg(0xDEADBEEF);
+
+    // ── 1. Stars ──
+    // ~900 stars across the canvas, mirroring the 1024×1024 texture in main.c
+    const starCount = Math.round((W * H) / 1100);
+    for (let i = 0; i < starCount; i++) {
+      const x    = rng() * W;
+      const y    = rng() * H;
+      const size = rng();
+      const brightness = rng();
+
+      if (size < 0.72) {
+        // tiny 1px stars
+        const a = 0.25 + brightness * 0.55;
+        const b = Math.floor(200 + brightness * 55);
+        gx.fillStyle = `rgba(${b},${b},255,${a})`;
+        gx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+      } else if (size < 0.92) {
+        // medium stars with soft glow
+        const a = 0.45 + brightness * 0.45;
+        const r = 0.8 + brightness * 0.7;
+        const grad = gx.createRadialGradient(x, y, 0, x, y, r * 2.5);
+        grad.addColorStop(0, `rgba(240,230,255,${a})`);
+        grad.addColorStop(1, `rgba(180,160,255,0)`);
+        gx.fillStyle = grad;
+        gx.beginPath(); gx.arc(x, y, r * 2.5, 0, Math.PI*2); gx.fill();
+        // solid centre
+        gx.fillStyle = `rgba(255,250,255,${a})`;
+        gx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+      } else {
+        // bright stars — tiny cross diffraction spike
+        const a = 0.7 + brightness * 0.3;
+        const r = 1.0 + brightness * 0.8;
+        const grad = gx.createRadialGradient(x, y, 0, x, y, r * 4);
+        grad.addColorStop(0,   `rgba(255,245,255,${a})`);
+        grad.addColorStop(0.3, `rgba(220,200,255,${a*0.6})`);
+        grad.addColorStop(1,   `rgba(180,140,255,0)`);
+        gx.fillStyle = grad;
+        gx.beginPath(); gx.arc(x, y, r * 4, 0, Math.PI*2); gx.fill();
+        // diffraction lines
+        gx.strokeStyle = `rgba(255,240,255,${a * 0.5})`;
+        gx.lineWidth = 0.5;
+        const spike = r * 6;
+        gx.beginPath(); gx.moveTo(x - spike, y); gx.lineTo(x + spike, y); gx.stroke();
+        gx.beginPath(); gx.moveTo(x, y - spike); gx.lineTo(x, y + spike); gx.stroke();
+      }
+    }
+
+    // ── 2. Nebula clouds — painted as large soft radial gradients ──
+    const nebulae = [
+      // [cx_frac, cy_frac, r_frac, r, g, b, alpha]
+      [1.05, -0.10, 0.55, 120, 30, 200, 0.07],   // deep purple — top right
+      [-0.10, 1.05, 0.45, 200, 30, 140, 0.055],  // magenta — bottom left
+      [0.50,  0.50, 0.38,  40, 80, 200, 0.035],  // teal — centre
+      [0.50, -0.10, 0.30, 180, 80, 255, 0.030],  // accent violet — top centre
+    ];
+    const base = Math.min(W, H);
+    for (const [fx, fy, fr, r, g, b, a] of nebulae) {
+      const cx = W * fx, cy = H * fy, rad = base * fr;
+      const grad = gx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      grad.addColorStop(0,   `rgba(${r},${g},${b},${a})`);
+      grad.addColorStop(0.5, `rgba(${r},${g},${b},${a*0.4})`);
+      grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+      gx.fillStyle = grad;
+      gx.fillRect(0, 0, W, H);
+    }
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+
 </script>
 
 </body>
