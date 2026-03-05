@@ -1,8 +1,8 @@
 ; ══════════════════════════════════════════════════════════════════
 ;  Game Catalogue – NSIS Installer Script
 ;
-;  Lives in:  GameCatalogue\docs\installer.nsi
-;  Run via:   docs\package.bat  (handles cd to project root)
+;  Lives in:  GameCatalogue\installer\installer.nsi
+;  Run via:   installer\package.bat  (handles cd to project root)
 ; ══════════════════════════════════════════════════════════════════
 
 Unicode True
@@ -39,7 +39,7 @@ Unicode True
 ; Output settings
 ;------------------------------------------------------------------
 Name             "${APP_NAME} ${APP_VERSION}"
-OutFile          "GameCatalogue-Setup-Latest.exe"
+OutFile          "..\docs\GameCatalogue-Setup-Latest.exe"
 InstallDir       "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "${REG_KEY}" "InstallLocation"
 RequestExecutionLevel admin

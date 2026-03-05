@@ -1,7 +1,7 @@
 @echo off
 :: ══════════════════════════════════════════════════════════════════
-::  docs\package.bat  –  Build exe then create NSIS installer
-::  Lives in:  GameCatalogue\docs\
+::  installer\package.bat  –  Build exe then create NSIS installer
+::  Lives in:  GameCatalogue\installer\
 :: ══════════════════════════════════════════════════════════════════
 setlocal
 
@@ -33,7 +33,7 @@ if errorlevel 1 (
     )
 )
 
-"%MAKENSIS%" "docs\installer.nsi"
+"%MAKENSIS%" "installer\installer.nsi"
 if errorlevel 1 (
     echo ERROR: NSIS compilation failed. Check output above.
     pause & exit /b 1
