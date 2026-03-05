@@ -324,7 +324,8 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
     box-shadow: 0 40px 120px rgba(0,0,0,0.7);
     animation: riseIn .9s .4s both;
   }
@@ -341,22 +342,63 @@
     padding: 0 0 0 8px;
     gap: 0;
     border-bottom: 1px solid var(--wp-sep);
+    border-radius: 10px 10px 0 0;
+    overflow: hidden;
+    position: relative;
+    z-index: 2;
   }
-  .win-sort-group { display: flex; gap: 4px; align-items: center; }
-  .win-sort-pill {
+
+  /* Sort dropdown button */
+  .win-sort-btn {
     font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
     font-size: 10px;
     height: 22px; width: 68px;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 7px 0 8px;
     border-radius: 5px;
+    border: 1px solid var(--wp-sep);
+    background: color-mix(in srgb, var(--wp-srch) 80%, transparent);
     color: var(--wp-sub);
     cursor: default;
-    transition: background .4s, color .4s;
+    flex-shrink: 0;
   }
-  .win-sort-pill.active {
-    background: color-mix(in srgb, var(--wp-acc) 35%, transparent);
-    color: var(--wp-txt);
+  .win-sort-btn svg { opacity: .5; }
+
+  /* Dropdown panel */
+  .win-dd-panel {
+    position: absolute;
+    top: 35px; left: 8px;
+    width: 90px;
+    background: var(--wp-tbar);
+    border: 1px solid color-mix(in srgb, var(--wp-acc) 55%, transparent);
+    border-radius: 7px;
+    padding: 2px;
+    z-index: 20;
+    box-shadow: 0 8px 32px rgba(0,0,0,.55);
   }
+  /* Sliding accent pill */
+  .win-dd-pill {
+    position: absolute;
+    left: 3px; width: calc(100% - 6px);
+    height: 22px; border-radius: 5px;
+    background: color-mix(in srgb, var(--wp-acc) 40%, transparent);
+    transition: top .18s cubic-bezier(.25,.8,.25,1);
+    pointer-events: none;
+  }
+  .win-dd-item {
+    height: 26px;
+    display: flex; align-items: center;
+    padding: 0 8px;
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 10px;
+    border-radius: 5px;
+    color: var(--wp-sub);
+    position: relative; z-index: 1;
+    cursor: default;
+    transition: color .12s;
+  }
+  .win-dd-item:hover { color: var(--wp-txt); }
+  .win-dd-item.active { color: #fff; font-weight: 500; }
   .win-tb-sep {
     width: 1px; height: 14px;
     background: var(--wp-sep);
@@ -390,14 +432,17 @@
   }
   .win-theme-dots { position: relative; }
 
-  .win-wbtns { display: flex; margin-left: auto; }
+  .win-wbtns { display: flex; margin-left: auto; height: 34px; }
   .win-wbtn {
-    width: 42px; height: 34px;
+    width: 46px; height: 34px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 10px; color: var(--wp-sub);
-    cursor: default; transition: background .15s, color .15s;
+    color: rgba(255,255,255,.45);
+    cursor: default;
+    transition: background .12s, color .12s;
+    flex-shrink: 0;
   }
-  .win-wbtn:hover { background: rgba(255,255,255,.07); color: var(--wp-txt); }
+  .win-wbtn svg { display: block; }
+  .win-wbtn:hover { background: rgba(255,255,255,.08); color: rgba(255,255,255,.9); }
   .win-wbtn-close:hover { background: #c42b1c; color: #fff; }
 
   /* Header — app title left, search right */
@@ -508,22 +553,21 @@
     position: relative;
   }
   .win-pg-btn {
-    display: flex; align-items: center; gap: 5px;
-    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
-    font-size: 11px;
-    color: var(--wp-sub);
+    width: 40px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
     border: 1px solid var(--wp-sep);
     border-radius: 8px;
-    padding: 0 14px;
-    height: 30px;
+    background: color-mix(in srgb, var(--wp-srch) 80%, transparent);
     cursor: default;
     transition: border-color .3s, color .3s, background .3s;
+    flex-shrink: 0;
   }
   .win-pg-btn:hover {
     border-color: color-mix(in srgb, var(--wp-acc) 60%, transparent);
-    color: var(--wp-txt);
+    color: var(--wp-acc);
     background: color-mix(in srgb, var(--wp-acc) 8%, transparent);
   }
+  .win-pg-btn svg { display: block; }
   .win-pg-btn-arrow { font-size: 10px; color: var(--wp-acc); opacity: .7; }
   .win-pg-center {
     position: absolute; left: 50%; transform: translateX(-50%);
@@ -552,6 +596,8 @@
     border-top: 1px solid color-mix(in srgb, var(--wp-acc) 12%, transparent);
     display: flex; align-items: center;
     padding: 0 10px;
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
   }
   .win-sbar-left {
     font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
@@ -794,13 +840,14 @@
 <div class="app-preview">
   <div class="window">
 
-    <!-- Title bar: sort pills | separator | view icons | theme dots | window buttons -->
+    <!-- Title bar: sort dropdown button | separator | view icons | theme dots | window buttons -->
     <div class="win-titlebar">
-      <div class="win-sort-group">
-        <div class="win-sort-pill active">A ↑ Z</div>
-        <div class="win-sort-pill">Z ↓ A</div>
-        <div class="win-sort-pill">Newest</div>
-        <div class="win-sort-pill">Oldest</div>
+      <!-- Sort dropdown button (open state) -->
+      <div class="win-sort-btn">
+        A ↑ Z
+        <svg width="8" height="5" viewBox="0 0 8 5" fill="none">
+          <path d="M1 1L4 4L7 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </div>
       <div class="win-tb-sep"></div>
       <div class="win-view-group">
@@ -825,9 +872,21 @@
       <!-- 8 theme colour dots — drawn on canvas exactly like the C code -->
       <canvas id="dotCanvas" style="display:block;cursor:pointer;margin-left:10px"></canvas>
       <div class="win-wbtns">
-        <div class="win-wbtn win-wbtn-min">&#8211;</div>
-        <div class="win-wbtn win-wbtn-max">&#9633;</div>
-        <div class="win-wbtn win-wbtn-close">&#10005;</div>
+        <!-- Min -->
+        <div class="win-wbtn win-wbtn-min">
+          <svg width="10" height="1" viewBox="0 0 10 1"><line x1="0" y1=".5" x2="10" y2=".5" stroke="currentColor" stroke-width="1.5"/></svg>
+        </div>
+        <!-- Max -->
+        <div class="win-wbtn win-wbtn-max">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x=".75" y=".75" width="8.5" height="8.5" rx=".5" stroke="currentColor" stroke-width="1.25"/></svg>
+        </div>
+        <!-- Close -->
+        <div class="win-wbtn win-wbtn-close">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
       </div>
     </div>
 
@@ -909,7 +968,11 @@
 
     <!-- Page bar -->
     <div class="win-pagebar">
-      <div class="win-pg-btn"><span class="win-pg-btn-arrow">‹</span> Prev</div>
+      <div class="win-pg-btn">
+        <svg width="8" height="13" viewBox="0 0 8 13" fill="none">
+          <path d="M6 1L1 6.5L6 12" stroke="var(--wp-sub)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
       <div class="win-pg-center">
         <div class="win-pg-dots">
           <div class="win-pg-dot"></div>
@@ -920,7 +983,11 @@
         </div>
         <div class="win-pg-label">2 / 5</div>
       </div>
-      <div class="win-pg-btn" style="margin-left:auto">Next <span class="win-pg-btn-arrow">›</span></div>
+      <div class="win-pg-btn" style="margin-left:auto">
+        <svg width="8" height="13" viewBox="0 0 8 13" fill="none">
+          <path d="M2 1L7 6.5L2 12" stroke="var(--wp-sub)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
     </div>
 
     <!-- Status bar -->

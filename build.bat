@@ -21,14 +21,16 @@ if errorlevel 1 ( echo ERROR: windres failed & pause & exit /b 1 )
 
 :: ── Compile sources ───────────────────────────────────────────────
 echo [2/3] Compiling sources...
-gcc %FLAGS% -c src\main.c  -o build\main.o  %INC%
-if errorlevel 1 ( echo ERROR: main.c failed  & pause & exit /b 1 )
-gcc %FLAGS% -c src\games.c -o build\games.o %INC%
-if errorlevel 1 ( echo ERROR: games.c failed & pause & exit /b 1 )
+gcc %FLAGS% -c src\main.c   -o build\main.o   %INC%
+if errorlevel 1 ( echo ERROR: main.c failed   & pause & exit /b 1 )
+gcc %FLAGS% -c src\themes.c -o build\themes.o %INC%
+if errorlevel 1 ( echo ERROR: themes.c failed & pause & exit /b 1 )
+gcc %FLAGS% -c src\games.c  -o build\games.o  %INC%
+if errorlevel 1 ( echo ERROR: games.c failed  & pause & exit /b 1 )
 
 :: ── Link ──────────────────────────────────────────────────────────
 echo [3/3] Linking...
-gcc %FLAGS% -o "Game Catalogue.exe" build\main.o build\games.o build\app_res.o %LIB% %LIBS%
+gcc %FLAGS% -o "Game Catalogue.exe" build\main.o build\themes.o build\games.o build\app_res.o %LIB% %LIBS%
 if errorlevel 1 ( echo ERROR: link failed & pause & exit /b 1 )
 
 echo.

@@ -11,14 +11,14 @@
  *  + Sort buttons: sliding pill + Z-A fix
  *
  *  BUILD (Windows MinGW):
- *    gcc -O2 -o gamelist.exe main.c games.c            \
+ *    gcc -O2 -o gamelist.exe main.c themes.c games.c   \
  *        -I"C:/SDL2/include" -I"C:/SDL2/include/SDL2"  \
  *        -L"C:/SDL2/lib"                               \
  *        -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf        \
  *        -mwindows
  *
  *  BUILD (Linux/macOS):
- *    gcc -O2 -o gamelist main.c games.c                \
+ *    gcc -O2 -o gamelist main.c themes.c games.c       \
  *        $(sdl2-config --cflags --libs) -lSDL2_ttf -lm
  * ══════════════════════════════════════════════════════════════════
  */
@@ -34,6 +34,7 @@
 #include <windows.h>
 #endif
 #include "games.h"
+#include "themes.h"
 
 #ifdef _WIN32
   #include <SDL2/SDL_syswm.h>
@@ -42,18 +43,12 @@
 #endif
 
 /* ── Window state ─────────────────────────────────────────────── */
-static int win_w = 1280;
-static int win_h = 860;
+int win_w = 1280;
+int win_h = 860;
 #define MIN_W 700
 #define MIN_H 480
 
-/* ── Title bar ────────────────────────────────────────────────── */
-#define TITLE_H   34
-#define TB_BTN_W  40
-
 /* ── Layout ───────────────────────────────────────────────────── */
-#define HDR_Y    TITLE_H
-#define HDR_H    68
 #define TAB_Y   (TITLE_H + HDR_H)
 #define TAB_H    44
 #define SB_H     26
@@ -146,20 +141,6 @@ static void init_save_path(void){
 #define TC_X0  8
 
 /* ═══════════════════════ Types ═══════════════════════════════════ */
-typedef struct { Uint8 r,g,b,a; } C4;
-#define MK4(r,g,b,a) ((C4){(Uint8)(r),(Uint8)(g),(Uint8)(b),(Uint8)(a)})
-
-static inline float clampf(float v,float lo,float hi){return v<lo?lo:v>hi?hi:v;}
-static inline float lerpf (float a,float b,float t)  {return a+(b-a)*t;}
-static inline C4 lerpc(C4 a,C4 b,float t){
-    return MK4((Uint8)lerpf(a.r,b.r,t),(Uint8)lerpf(a.g,b.g,t),
-               (Uint8)lerpf(a.b,b.b,t),(Uint8)lerpf(a.a,b.a,t));
-}
-static inline C4 tintc(C4 c,float f){
-    return MK4((Uint8)clampf(c.r*f,0,255),(Uint8)clampf(c.g*f,0,255),
-               (Uint8)clampf(c.b*f,0,255),c.a);
-}
-
 typedef struct {
     char name[128];
     char genre[32];
@@ -251,272 +232,16 @@ static float srch_glow=0.f;
 static Uint64 plast=0;
 static float  dt_=0.016f;
 
-/* ═══════════════════════ Themes + live colours ════════════════ */
-#define N_THEMES 8
 
-#define TDOT_R    9
-#define TDOT_STEP 24
-
-typedef struct {
-    const char *name;
-    C4 bg,hdr,title,tbar,rowa,rowb,rowh;
-    C4 acc,txt,sub,dim;
-    C4 scrbg,scrth,scrto;
-    C4 sbar,srch,srcha,sep,btni,close;
-} Theme;
-
-static const Theme THEMES[N_THEMES] = {
-    {"Void",
-     {10,10,22,255},{6,6,16,255},{4,4,11,255},{14,14,28,255},
-     {18,18,36,255},{15,15,30,255},{30,30,62,255},
-     {108,72,228,255},{225,225,240,255},{115,115,150,255},{52,52,82,255},
-     {16,16,32,255},{55,55,100,255},{90,90,150,255},
-     {7,7,17,255},{20,20,42,255},{26,26,50,255},{22,22,44,255},{18,18,40,255},{220,58,58,255}},
-    {"Ocean",
-     {6,12,24,255},{4,8,18,255},{3,6,14,255},{8,14,28,255},
-     {10,18,38,255},{8,15,32,255},{18,32,64,255},
-     {0,188,212,255},{220,235,245,255},{100,140,170,255},{40,60,90,255},
-     {6,12,26,255},{30,70,110,255},{50,110,160,255},
-     {3,8,18,255},{10,20,44,255},{14,26,52,255},{14,22,46,255},{10,18,40,255},{220,58,58,255}},
-    {"Forest",
-     {6,14,8,255},{4,10,6,255},{3,7,4,255},{8,18,10,255},
-     {10,20,12,255},{8,16,10,255},{18,38,22,255},
-     {56,200,80,255},{215,240,220,255},{100,150,110,255},{40,72,46,255},
-     {6,14,8,255},{30,90,40,255},{50,140,60,255},
-     {3,8,4,255},{10,22,12,255},{14,28,16,255},{14,26,16,255},{10,20,12,255},{220,58,58,255}},
-    {"Crimson",
-     {18,6,8,255},{13,4,6,255},{9,3,4,255},{22,8,10,255},
-     {30,10,12,255},{24,8,10,255},{50,18,20,255},
-     {230,56,72,255},{245,220,222,255},{160,100,105,255},{80,36,40,255},
-     {14,4,6,255},{100,26,32,255},{150,40,48,255},
-     {10,3,4,255},{24,10,12,255},{30,14,16,255},{28,10,12,255},{22,8,10,255},{220,58,58,255}},
-    {"Amber",
-     {18,12,4,255},{13,9,3,255},{9,6,2,255},{22,15,6,255},
-     {28,18,8,255},{24,15,6,255},{46,30,12,255},
-     {230,170,40,255},{248,238,210,255},{160,138,90,255},{80,62,28,255},
-     {14,9,3,255},{100,70,20,255},{150,110,30,255},
-     {10,6,2,255},{22,14,6,255},{28,18,8,255},{26,16,6,255},{20,13,5,255},{220,58,58,255}},
-    {"Slate",
-     {12,14,16,255},{8,10,12,255},{6,7,9,255},{16,18,21,255},
-     {20,22,26,255},{17,19,22,255},{32,36,42,255},
-     {100,160,220,255},{220,225,230,255},{120,128,138,255},{55,60,68,255},
-     {10,12,14,255},{50,60,75,255},{80,95,115,255},
-     {6,8,10,255},{18,20,24,255},{22,25,30,255},{22,24,28,255},{16,18,22,255},{220,58,58,255}},
-    {"Rose",
-     {18,6,14,255},{13,4,10,255},{9,3,7,255},{22,8,17,255},
-     {30,10,24,255},{24,8,19,255},{50,18,40,255},
-     {230,60,160,255},{245,220,238,255},{160,100,140,255},{80,36,66,255},
-     {14,4,11,255},{100,26,80,255},{150,40,120,255},
-     {10,3,8,255},{24,10,20,255},{30,14,24,255},{26,10,21,255},{22,8,18,255},{220,58,58,255}},
-    {"Nord",
-     {18,20,28,255},{14,16,22,255},{10,12,17,255},{22,24,32,255},
-     {30,32,44,255},{26,28,38,255},{46,50,68,255},
-     {136,192,208,255},{236,239,244,255},{130,140,160,255},{67,76,94,255},
-     {16,18,26,255},{60,70,90,255},{90,105,130,255},
-     {12,14,20,255},{26,28,40,255},{32,36,48,255},{30,32,46,255},{24,26,38,255},{220,58,58,255}},
-};
-
-static int   cur_theme = 0;
-static float tdot_hov   [N_THEMES];
-static float tdot_bounce[N_THEMES];
-static float sel_ring_if = 0.f;
-static float theme_pulse = 0.f;
-static int   dots_in_tb  = 0;
-static int   dots_in_tb_prev = -1;
-static int   dots_x0     = 0;
-static int   dots_cy     = 0;
-static int   sr_x        = 380;
-static int   sr_w        = 380;
-
-#define N_CSLOTS 20
-#define TC_SPEED 5.5f
-static C4    tc_from[N_CSLOTS];
-static C4    tc_to  [N_CSLOTS];
-static float tc_t = 1.f;
-
-static C4 C_BG,C_HDR,C_TITLE,C_TBAR,C_ROWA,C_ROWB,C_ROWH,
-          C_ACC,C_TXT,C_SUB,C_DIM,
-          C_SCRBG,C_SCRTH,C_SCRTO,
-          C_SBAR,C_SRCH,C_SRCHA,C_SEP,C_BTNI,C_CLOSE;
-
-static void theme_pack(const Theme *t, C4 *s){
-    s[0]=t->bg;    s[1]=t->hdr;   s[2]=t->title; s[3]=t->tbar;
-    s[4]=t->rowa;  s[5]=t->rowb;  s[6]=t->rowh;  s[7]=t->acc;
-    s[8]=t->txt;   s[9]=t->sub;   s[10]=t->dim;
-    s[11]=t->scrbg;s[12]=t->scrth;s[13]=t->scrto;
-    s[14]=t->sbar; s[15]=t->srch; s[16]=t->srcha;s[17]=t->sep;
-    s[18]=t->btni; s[19]=t->close;
-}
-static void theme_apply_slots(const C4 *s){
-    C_BG=s[0];  C_HDR=s[1];   C_TITLE=s[2];  C_TBAR=s[3];
-    C_ROWA=s[4];C_ROWB=s[5];  C_ROWH=s[6];   C_ACC=s[7];
-    C_TXT=s[8]; C_SUB=s[9];   C_DIM=s[10];
-    C_SCRBG=s[11];C_SCRTH=s[12];C_SCRTO=s[13];
-    C_SBAR=s[14];C_SRCH=s[15];C_SRCHA=s[16]; C_SEP=s[17];
-    C_BTNI=s[18];C_CLOSE=s[19];
-}
-static void tick_theme(float dt){
-    if(tc_t>=1.f) return;
-    tc_t+=dt*TC_SPEED; if(tc_t>1.f) tc_t=1.f;
-    C4 cur[N_CSLOTS];
-    for(int i=0;i<N_CSLOTS;i++) cur[i]=lerpc(tc_from[i],tc_to[i],tc_t);
-    theme_apply_slots(cur);
-}
-static void set_theme(int idx){
-    cur_theme=idx;
-    tc_from[0]=C_BG;   tc_from[1]=C_HDR;   tc_from[2]=C_TITLE;
-    tc_from[3]=C_TBAR; tc_from[4]=C_ROWA;  tc_from[5]=C_ROWB;
-    tc_from[6]=C_ROWH; tc_from[7]=C_ACC;   tc_from[8]=C_TXT;
-    tc_from[9]=C_SUB;  tc_from[10]=C_DIM;  tc_from[11]=C_SCRBG;
-    tc_from[12]=C_SCRTH;tc_from[13]=C_SCRTO;tc_from[14]=C_SBAR;
-    tc_from[15]=C_SRCH; tc_from[16]=C_SRCHA;tc_from[17]=C_SEP;
-    tc_from[18]=C_BTNI; tc_from[19]=C_CLOSE;
-    theme_pack(&THEMES[idx],tc_to);
-    tc_t=0.f; theme_pulse=1.f;
-}
-static void set_theme_instant(int idx){
-    cur_theme=idx;
-    theme_pack(&THEMES[idx],tc_to);
-    for(int i=0;i<N_CSLOTS;i++) tc_from[i]=tc_to[i];
-    tc_t=1.f;
-    theme_apply_slots(tc_to);
-    sel_ring_if=(float)idx;
-}
-
-static void compute_dot_layout(void){
-    int right_pad  = 14;
-    int hdr_x0     = win_w - right_pad - (N_THEMES-1)*TDOT_STEP;
-    int fh12       = 22;
-    int total_h    = fh12 + 4 + TDOT_R*2 + 4 + fh12;
-    int hdr_cy     = HDR_Y + (HDR_H - total_h)/2 + fh12 + 4 + TDOT_R;
-    int need = 380 + 380 + 16 + (N_THEMES-1)*TDOT_STEP + TDOT_R + right_pad;
-    if(win_w >= need){
-        dots_in_tb = 0;
-        dots_x0    = hdr_x0;
-        dots_cy    = hdr_cy;
-        sr_x       = 380;
-        sr_w       = 380;
-    } else {
-        dots_in_tb = 1;
-        int right_edge = win_w - 3*TB_BTN_W - 20;
-        dots_x0    = right_edge - (N_THEMES-1)*TDOT_STEP;
-        dots_cy    = TITLE_H/2;
-        sr_w       = 380;
-        sr_x       = win_w - right_pad - 10 - sr_w;
-    }
-}
-
-static int hit_theme_dot(int mx,int my){
-    for(int i=0;i<N_THEMES;i++){
-        int cx=dots_x0+i*TDOT_STEP,dx=mx-cx,dy=my-dots_cy;
-        if(dx*dx+dy*dy<=(TDOT_R+4)*(TDOT_R+4)) return i;
-    }
-    return -1;
-}
 
 /* ═══════════════════════ SDL globals ═══════════════════════════ */
 static SDL_Window   *win=NULL;
-static SDL_Renderer *ren=NULL;
+SDL_Renderer *ren=NULL;
 static TTF_Font     *f22=NULL,*f18=NULL,*f14=NULL,*f12=NULL;
 static SDL_Cursor   *cur_arr=NULL,*cur_ns=NULL,*cur_ew=NULL,
                     *cur_nwse=NULL,*cur_nesw=NULL;
 
-/* ── Background effect textures ──────────────────────────────── */
-static SDL_Texture *grain_tex = NULL;   /* static film-grain overlay  */
-static SDL_Texture *blob_tex  = NULL;   /* soft radial gradient blob  */
-#define GRAIN_SZ   256  /* tiled noise texture size                   */
-#define BLOB_TEX_R 256  /* internal blob texture half-size            */
-#define BLOB_TEX_SZ (BLOB_TEX_R*2)
 
-static void bg_init(void){
-    /* ── Grain: random noise tiled at low opacity ── */
-    grain_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
-                                  SDL_TEXTUREACCESS_STATIC, GRAIN_SZ, GRAIN_SZ);
-    if(grain_tex){
-        Uint32 *px = (Uint32*)malloc(GRAIN_SZ*GRAIN_SZ*sizeof(Uint32));
-        if(px){
-            Uint32 rng = 0xDEADBEEF;
-            for(int i=0;i<GRAIN_SZ*GRAIN_SZ;i++){
-                rng = rng*1664525u + 1013904223u;
-                Uint8 v = (rng>>24) & 0xFF;
-                Uint8 a = (Uint8)(v * 0.09f);
-                px[i] = ((Uint32)255<<24)|((Uint32)255<<16)|((Uint32)255<<8)|a;
-            }
-            SDL_UpdateTexture(grain_tex, NULL, px, GRAIN_SZ*sizeof(Uint32));
-            free(px);
-        }
-        SDL_SetTextureBlendMode(grain_tex, SDL_BLENDMODE_BLEND);
-    }
-
-    /* ── Blob: normalised white radial gradient, scaled at draw time ── */
-    blob_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
-                                 SDL_TEXTUREACCESS_STATIC, BLOB_TEX_SZ, BLOB_TEX_SZ);
-    if(blob_tex){
-        Uint32 *px = (Uint32*)malloc(BLOB_TEX_SZ*BLOB_TEX_SZ*sizeof(Uint32));
-        if(px){
-            float rf = (float)BLOB_TEX_R;
-            for(int y=0;y<BLOB_TEX_SZ;y++){
-                for(int x=0;x<BLOB_TEX_SZ;x++){
-                    float dx=(float)(x-BLOB_TEX_R), dy=(float)(y-BLOB_TEX_R);
-                    float d = sqrtf(dx*dx+dy*dy)/rf;
-                    if(d>=1.f){px[y*BLOB_TEX_SZ+x]=0;continue;}
-                    /* soft Gaussian falloff */
-                    float g = expf(-2.8f*d*d);
-                    Uint8 a = (Uint8)(g*255.f);
-                    px[y*BLOB_TEX_SZ+x] = 0xFFFFFF00|a;
-                }
-            }
-            SDL_UpdateTexture(blob_tex, NULL, px, BLOB_TEX_SZ*sizeof(Uint32));
-            free(px);
-        }
-        SDL_SetTextureBlendMode(blob_tex, SDL_BLENDMODE_BLEND);
-    }
-}
-
-static void bg_free(void){
-    if(grain_tex){ SDL_DestroyTexture(grain_tex); grain_tex=NULL; }
-    if(blob_tex) { SDL_DestroyTexture(blob_tex);  blob_tex=NULL;  }
-}
-
-static void sc_(C4 c);     /* forward declaration */
-static void fblend(int x,int y,int w,int h,C4 c); /* forward declaration */
-
-/* Draw blob centred at (cx,cy), radius r px, scaled to window */
-static void draw_blob(int cx, int cy, int r, float opacity){
-    if(!blob_tex) return;
-    C4 ac = C_ACC;
-    SDL_SetTextureColorMod(blob_tex, ac.r, ac.g, ac.b);
-    SDL_SetTextureAlphaMod(blob_tex, (Uint8)(opacity*255.f));
-    SDL_Rect dst = { cx-r, cy-r, r*2, r*2 };
-    SDL_RenderCopy(ren, blob_tex, NULL, &dst);
-}
-
-static void draw_background(void){
-    sc_(C_BG); SDL_RenderClear(ren);
-
-    /* Blobs scale with window size — radius ~55% of the shorter dimension */
-    int base = (win_w < win_h ? win_w : win_h);
-    int r1 = (int)(base * 0.70f);   /* top-right  — biggest  */
-    int r2 = (int)(base * 0.58f);   /* bot-left   — medium   */
-    int r3 = (int)(base * 0.42f);   /* centre     — small    */
-
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    draw_blob(win_w,          0,              r1, 0.82f);
-    draw_blob(0,              win_h,          r2, 0.65f);
-    draw_blob(win_w*55/100,   win_h*50/100,   r3, 0.40f);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-
-    /* Grain overlay — tiled */
-    if(grain_tex){
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        for(int ty=0;ty<win_h;ty+=GRAIN_SZ)
-            for(int tx=0;tx<win_w;tx+=GRAIN_SZ){
-                SDL_Rect dst={tx,ty,GRAIN_SZ,GRAIN_SZ};
-                SDL_RenderCopy(ren, grain_tex, NULL, &dst);
-            }
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-    }
-}
 
 /* ═══════════════════════ Audio / SFX ═══════════════════════════ */
 static SDL_AudioDeviceID aud_dev=0;
@@ -568,7 +293,7 @@ static int  row_at(int mx,int my);
 static int  btn_at(int mx,int my,int ri);
 
 /* ═══════════════════════ Draw helpers ══════════════════════════ */
-static void sc_(C4 c){ SDL_SetRenderDrawColor(ren,c.r,c.g,c.b,c.a); }
+void sc_(C4 c){ SDL_SetRenderDrawColor(ren,c.r,c.g,c.b,c.a); }
 static void fr_(int x,int y,int w,int h,C4 c){
     sc_(c); SDL_Rect r={x,y,w,h}; SDL_RenderFillRect(ren,&r);
 }
@@ -637,7 +362,7 @@ static void bfrr_aa(int x,int y,int w,int h,int r,int t,C4 bc,C4 ic){
     frr_aa(x,y,w,h,r,bc);
     if(w>2*t&&h>2*t) frr_aa(x+t,y+t,w-2*t,h-2*t,r>t?r-t:0,ic);
 }
-static void fblend(int x,int y,int w,int h,C4 c){
+void fblend(int x,int y,int w,int h,C4 c){
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
     sc_(c); SDL_Rect r={x,y,w,h}; SDL_RenderFillRect(ren,&r);
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
@@ -963,6 +688,9 @@ static int anim_tick(void){
     /* ── Theme ring slide ── */
     SETTLE(sel_ring_if,(float)cur_theme,clampf(dt_*30.f,0.f,1.f));
 
+    /* ── Galaxy dot selection animation ── */
+    { float tgt=(cur_theme==8)?1.f:0.f; SETTLE(galaxy_dot_f,tgt,1.f-powf(0.00005f,dt_)); }
+
     /* ── Theme colour transition + dot animations ── */
     tick_theme(dt_);
     if(tc_t<1.f) busy=1;
@@ -995,7 +723,7 @@ static int anim_tick(void){
         /* sort dropdown item hovers — fast dedicated speed */
         float dd_item_spd = 1.f-powf(0.000005f, dt_);
         for(int i=0;i<4;i++){
-            int item_y=TITLE_H+2+i*DD_ITEM_H;
+            int item_y=TITLE_H+4+i*DD_ITEM_H;
             int in_item=(sort_dd_open&&sort_dd_anim>0.05f&&hf2&&
                          mx3>=TC_X0&&mx3<TC_X0+DD_W&&
                          my3>=item_y&&my3<item_y+DD_ITEM_H);
@@ -1134,10 +862,12 @@ static int anim_tick(void){
         if(srch_glow>0.01f){
             float rf2=(float)SR_R;
             float arc2=rf2*(float)M_PI/2.f;
-            float sx2=(float)sr_w-2.f*rf2;
-            float sy2=(float)SR_H-2.f*rf2;
+            float sx2=(float)(sr_w-1)-2.f*rf2;
+            float sy2=(float)(SR_H-1)-2.f*rf2;
             float perim=2.f*(sx2+sy2)+4.f*arc2;
-            float spd=s_on?460.f:220.f;
+            float spd = (cur_theme == 8)
+                        ? (s_on ? 700.f : 350.f)   /* Galaxy: stronger comet */
+                        : (s_on ? 460.f : 220.f);
             srch_spin=fmodf(srch_spin+dt_*spd,perim);
             busy=1;
         }
@@ -1458,46 +1188,64 @@ static void draw_srch_spin_fx(void){
 
     float rf   = (float)SR_R;
     float arc  = rf*(float)M_PI/2.f;
-    float sx   = (float)sr_w - 2.f*rf;
-    float sy   = (float)SR_H - 2.f*rf;
+    /* Pixel boundary: 0..(w-1) and 0..(h-1) */
+    float W    = (float)(sr_w - 1);
+    float H    = (float)(SR_H - 1);
+    float sx   = W - 2.f*rf;   /* top/bottom straight length */
+    float sy   = H - 2.f*rf;   /* left/right straight length */
     float perim = 2.f*(sx+sy) + 4.f*arc;
 
-    float x0=(float)sr_x, y0=(float)SR_Y;
+    float x0   = (float)sr_x;
+    float y0   = (float)SR_Y;
 
     float seg_len[8] = { sx, arc, sy, arc, sx, arc, sy, arc };
 
-    int tail = (int)(perim*0.40f);
+    int tail = (cur_theme == 8)
+               ? (int)(perim * 0.58f)   /* Galaxy: long comet tail */
+               : (int)(perim * 0.40f);
 
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
     for(int i=0; i<=tail; i++){
         float pos = fmodf(srch_spin - (float)i + perim*200.f, perim);
-        float t   = 1.f - (float)i/(float)tail;
+        float t   = 1.f - (float)i / (float)tail;
         float a   = t*t * srch_glow;
         if(a < 0.003f) continue;
 
         float acc=0.f; int seg=-1; float loc=0.f;
         for(int k=0;k<8;k++){
             if(pos < acc+seg_len[k]){ seg=k; loc=pos-acc; break; }
-            acc+=seg_len[k];
+            acc += seg_len[k];
         }
         if(seg<0){ seg=7; loc=seg_len[7]; }
 
         float px_f, py_f;
         switch(seg){
-        case 0: px_f = x0+rf+loc;                      py_f = y0;              break;
+        /* top edge: left → right */
+        case 0: px_f = x0+rf+loc;               py_f = y0;              break;
+        /* top-right arc: corner center (x0+W-rf, y0+rf) */
         case 1: { float ang = loc/rf;
-            px_f = x0+sx+rf + sinf(ang)*rf;        py_f = y0+rf - cosf(ang)*rf; } break;
-        case 2: px_f = x0+(float)sr_w;                 py_f = y0+rf+loc;       break;
+            px_f = x0+W-rf + sinf(ang)*rf;
+            py_f = y0+rf   - cosf(ang)*rf; }     break;
+        /* right edge: top → bottom */
+        case 2: px_f = x0+W;                    py_f = y0+rf+loc;       break;
+        /* bottom-right arc: corner center (x0+W-rf, y0+H-rf) */
         case 3: { float ang = loc/rf;
-            px_f = x0+sx+rf + cosf(ang)*rf;        py_f = y0+sy+rf + sinf(ang)*rf; } break;
-        case 4: px_f = x0+sx+rf-loc;                   py_f = y0+(float)SR_H;  break;
+            px_f = x0+W-rf + cosf(ang)*rf;
+            py_f = y0+H-rf + sinf(ang)*rf; }     break;
+        /* bottom edge: right → left */
+        case 4: px_f = x0+W-rf-loc;             py_f = y0+H;            break;
+        /* bottom-left arc: corner center (x0+rf, y0+H-rf) */
         case 5: { float ang = loc/rf;
-            px_f = x0+rf - sinf(ang)*rf;           py_f = y0+sy+rf + cosf(ang)*rf; } break;
-        case 6: px_f = x0;                             py_f = y0+sy+rf-loc;    break;
+            px_f = x0+rf   - sinf(ang)*rf;
+            py_f = y0+H-rf + cosf(ang)*rf; }     break;
+        /* left edge: bottom → top */
+        case 6: px_f = x0;                      py_f = y0+H-rf-loc;     break;
+        /* top-left arc: corner center (x0+rf, y0+rf) */
         case 7: { float ang = loc/rf;
-            px_f = x0+rf - cosf(ang)*rf;           py_f = y0+rf - sinf(ang)*rf; } break;
-        default: px_f=x0; py_f=y0; break;
+            px_f = x0+rf - cosf(ang)*rf;
+            py_f = y0+rf - sinf(ang)*rf; }       break;
+        default: px_f=x0; py_f=y0;              break;
         }
         int px=(int)(px_f+0.5f), py=(int)(py_f+0.5f);
 
@@ -1510,13 +1258,14 @@ static void draw_srch_spin_fx(void){
         { Uint8 ca=(Uint8)(a*255.f);
           C4 c2={col.r,col.g,col.b,ca}; sc_(c2);
           SDL_RenderDrawPoint(ren,px,py);
-          if(t>0.85f){ sc_(c2);
+          if(t>0.85f || (cur_theme == 8 && t>0.70f)){ sc_(c2);
               SDL_RenderDrawPoint(ren,px+1,py);
               SDL_RenderDrawPoint(ren,px,py+1); } }
 
         if(t>0.35f){
             float gt=(t-0.35f)/0.65f;
-            Uint8 ga=(Uint8)(gt*gt*srch_glow*140.f);
+            float glow_str = (cur_theme == 8) ? 200.f : 140.f;
+            Uint8 ga=(Uint8)(gt*gt*srch_glow*glow_str);
             C4 g2={col.r,col.g,col.b,ga}; sc_(g2);
             SDL_RenderDrawPoint(ren,px-1,py);
             SDL_RenderDrawPoint(ren,px+1,py);
@@ -1532,6 +1281,19 @@ static void draw_srch_spin_fx(void){
             SDL_RenderDrawPoint(ren,px-1,py+1);
             SDL_RenderDrawPoint(ren,px+1,py+1);
             SDL_RenderDrawPoint(ren,px,py);
+            if(cur_theme == 8){
+                /* Galaxy: wider sparkle cross at the comet head */
+                Uint8 fa2=(Uint8)(srch_glow*180.f);
+                C4 fl2={255,220,255,fa2}; sc_(fl2);
+                SDL_RenderDrawPoint(ren,px-2,py);
+                SDL_RenderDrawPoint(ren,px+2,py);
+                SDL_RenderDrawPoint(ren,px,py-2);
+                SDL_RenderDrawPoint(ren,px,py+2);
+                SDL_RenderDrawPoint(ren,px-2,py-2);
+                SDL_RenderDrawPoint(ren,px+2,py-2);
+                SDL_RenderDrawPoint(ren,px-2,py+2);
+                SDL_RenderDrawPoint(ren,px+2,py+2);
+            }
         }
     }
 
@@ -1638,7 +1400,7 @@ static void draw_sort_dropdown(void){
     if(sort_dd_anim < 0.01f) return;
     static const char *slbl[4]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest"};
     float a = sort_dd_anim;
-    int total_h = 4*DD_ITEM_H + 4;
+    int total_h = 4*DD_ITEM_H + 6;  /* 2px top pad + items + 2px bottom pad + 2px border */
     int visible_h = (int)(total_h * a);
     if(visible_h < 2) return;
 
@@ -1656,13 +1418,13 @@ static void draw_sort_dropdown(void){
     /* items — sliding pill follows sort_ind_f, same as tab/sort pill */
     {
         /* draw the sliding selection pill */
-        float pill_y = TITLE_H+2 + sort_ind_f * DD_ITEM_H;
+        float pill_y = TITLE_H+4 + sort_ind_f * DD_ITEM_H;
         C4 pill = {C_ACC.r, C_ACC.g, C_ACC.b, (Uint8)(180*a)};
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        frr_aa(TC_X0+3, (int)(pill_y+2.5f), DD_W-6, DD_ITEM_H-4, 5, pill);
+        frr_aa(TC_X0+3, (int)(pill_y+0.5f)+2, DD_W-6, DD_ITEM_H-4, 5, pill);
     }
     for(int i=0;i<4;i++){
-        int iy = TITLE_H+2+i*DD_ITEM_H;
+        int iy = TITLE_H+4+i*DD_ITEM_H;  /* shifted +2 for equal top/bottom gap */
         float hv = sort_item_hov[i];
         int act = (sort_mode==(SortMode)i);
         int ty = iy+(DD_ITEM_H-TTF_FontHeight(f14))/2;
@@ -1702,10 +1464,9 @@ static void draw_titlebar(void){
     {
         /* When dropdown is open, keep button fully "active" regardless of hover */
         float hv = sort_dd_open ? 1.f : sort_btn_hov;
-        /* button background */
-        C4 bg = lerpc(C_SRCH, C_SRCHA, hv*0.5f); bg.a=255;
-        C4 bc = lerpc(C_SEP, C_ACC, hv*0.7f);
-        bfrr_aa(TC_X0, TC_Y, DD_BTN_W, DD_BTN_H, 5, 1, bc, bg);
+        C4 bg  = lerpc(C_BG, C_ACC, 0.18f * hv); bg.a = 255;
+        C4 bc  = lerpc(C_SEP, C_ACC, hv * 0.9f); bc.a = (Uint8)(80 + hv*120);
+        bfrr_aa(TC_X0, TC_Y, DD_BTN_W, DD_BTN_H, 5, 2, bc, bg);
         /* label = current sort mode */
         C4 lc = C_TXT; lc.a = (Uint8)(150 + hv*105);
         int lw2 = txw_(f14, slbl[sort_mode]);
@@ -1742,8 +1503,9 @@ static void draw_titlebar(void){
     {
         int vx0=TC_X0+DD_BTN_W+20;
         float px2 = vx0 + view_ind_f*(float)(VC_W+TC_GAP);
-        C4 vpill = {C_ACC.r,C_ACC.g,C_ACC.b,200};
-        frr_aa((int)(px2+0.5f), TC_Y, VC_W, TC_H, 5, vpill);
+        C4 vbg  = lerpc(C_BG, C_ACC, 0.18f); vbg.a = 255;
+        C4 vbdr = C_ACC; vbdr.a = 200;
+        bfrr_aa((int)(px2+0.5f), TC_Y, VC_W, TC_H, 5, 2, vbdr, vbg);
     }
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
     {
@@ -1756,13 +1518,16 @@ static void draw_titlebar(void){
             sc_(ic);
             int cx=bx+VC_W/2, cy=TC_Y+TC_H/2;
             if(i==0){
-                int lw2=16;
-                for(int r2=-5;r2<=5;r2+=5){
-                    SDL_RenderDrawLine(ren,cx-lw2/2,cy+r2,cx+lw2/2-1,cy+r2);
-                    SDL_RenderDrawLine(ren,cx-lw2/2,cy+r2+1,cx+lw2/2-1,cy+r2+1);
+                /* List icon: 3×2px lines, offsets -4,-1,+2 → spans cy-4..cy+3, centered on cy */
+                int lw2=14;
+                int offs[3]={-4,-1,2};
+                for(int k=0;k<3;k++){
+                    SDL_RenderDrawLine(ren,cx-lw2/2,cy+offs[k],  cx+lw2/2-1,cy+offs[k]);
+                    SDL_RenderDrawLine(ren,cx-lw2/2,cy+offs[k]+1,cx+lw2/2-1,cy+offs[k]+1);
                 }
             } else {
-                int sz=6, gap=4, half=(sz*2+gap)/2;
+                /* Grid icon: 2×2 squares, sz=5, gap=4 → 14px total */
+                int sz=5, gap=4, half=(sz*2+gap)/2;
                 SDL_Rect g1={cx-half,        cy-half,        sz,sz};
                 SDL_Rect g2={cx-half+sz+gap, cy-half,        sz,sz};
                 SDL_Rect g3={cx-half,        cy-half+sz+gap, sz,sz};
@@ -1870,7 +1635,8 @@ static void draw_hdr(void){
                 int   rx  = dots_x0+(int)(sel_ring_if*(float)TDOT_STEP+0.5f);
                 C4 ac=THEMES[cur_theme].acc;
                 C4 ring={ac.r,ac.g,ac.b,230};
-                frr_aa(rx-TDOT_R-1,dots_cy+ryo-TDOT_R-1,(TDOT_R+1)*2,(TDOT_R+1)*2,TDOT_R+1,ring);
+                int ring_r = TDOT_R + (int)(galaxy_dot_f * 3.f);
+                frr_aa(rx-ring_r-1,dots_cy+ryo-ring_r-1,(ring_r+1)*2,(ring_r+1)*2,ring_r+1,ring);
             }
             for(int i=0;i<N_THEMES;i++){
                 int cx  = dots_x0+i*TDOT_STEP;
@@ -1878,6 +1644,39 @@ static void draw_hdr(void){
                 float bn= tdot_bounce[i];
                 int yoff= (bn>0.f)?(int)(-sinf(bn*(float)M_PI)*7.f):0;
                 C4 ac=THEMES[i].acc;
+
+                /* Galaxy extra effects — layered behind the base dot, scaled by gf */
+                if(i==8 && galaxy_dot_f>0.15f){
+                    float gf=galaxy_dot_f;
+                    int extra=(int)(gf*3.f);  /* 0..3 extra px, floor so it drops cleanly */
+                    /* outer nebula haze */
+                    int hr=TDOT_R+extra+(int)(gf*5.f);
+                    C4 haze={180,60,255,(Uint8)(gf*(35+hf*30))};
+                    frr_aa(cx-hr,dots_cy+yoff-hr,hr*2,hr*2,hr,haze);
+                    /* inner glow ring */
+                    C4 glow={210,100,255,(Uint8)(gf*(80+hf*50))};
+                    int gr1=TDOT_R+extra;
+                    frr_aa(cx-gr1-1,dots_cy+yoff-gr1-1,(gr1+1)*2,(gr1+1)*2,gr1+1,glow);
+                    /* diffraction spikes */
+                    int sd=TDOT_R+extra+(int)(gf*4.f);
+                    C4 sp={255,200,255,(Uint8)(gf*200)}; sc_(sp);
+                    SDL_RenderDrawPoint(ren,cx,    dots_cy+yoff-sd);
+                    SDL_RenderDrawPoint(ren,cx,    dots_cy+yoff+sd);
+                    SDL_RenderDrawPoint(ren,cx-sd, dots_cy+yoff);
+                    SDL_RenderDrawPoint(ren,cx+sd, dots_cy+yoff);
+                    C4 sp2={255,200,255,(Uint8)(gf*100)}; sc_(sp2);
+                    SDL_RenderDrawPoint(ren,cx,      dots_cy+yoff-sd-1);
+                    SDL_RenderDrawPoint(ren,cx,      dots_cy+yoff+sd+1);
+                    SDL_RenderDrawPoint(ren,cx-sd-1, dots_cy+yoff);
+                    SDL_RenderDrawPoint(ren,cx+sd+1, dots_cy+yoff);
+                    C4 sp3={200,150,255,(Uint8)(gf*80)}; sc_(sp3);
+                    SDL_RenderDrawPoint(ren,cx-sd+2, dots_cy+yoff-sd+2);
+                    SDL_RenderDrawPoint(ren,cx+sd-2, dots_cy+yoff-sd+2);
+                    SDL_RenderDrawPoint(ren,cx-sd+2, dots_cy+yoff+sd-2);
+                    SDL_RenderDrawPoint(ren,cx+sd-2, dots_cy+yoff+sd-2);
+                }
+
+                /* Base dot — always drawn at TDOT_R, same as every other dot */
                 if(hf>0.02f && i!=cur_theme){
                     C4 hover={ac.r,ac.g,ac.b,(Uint8)(hf*90)};
                     frr_aa(cx-TDOT_R-1,dots_cy+yoff-TDOT_R-1,(TDOT_R+1)*2,(TDOT_R+1)*2,TDOT_R+1,hover);
@@ -1885,7 +1684,11 @@ static void draw_hdr(void){
                 float br=0.45f+0.55f*hf;
                 C4 fc={(Uint8)(ac.r*br),(Uint8)(ac.g*br),(Uint8)(ac.b*br),255};
                 frr_aa(cx-TDOT_R,dots_cy+yoff-TDOT_R,TDOT_R*2,TDOT_R*2,TDOT_R,fc);
-                if(i==cur_theme){C4 w={255,255,255,200};frr_aa(cx-3,dots_cy+yoff-3,6,6,3,w);}
+                if(i==cur_theme){
+                    int wr = (i==8) ? 3+(int)(galaxy_dot_f) : 3;
+                    C4 w={255,255,255,(Uint8)(180+(i==8?galaxy_dot_f*40.f:20.f))};
+                    frr_aa(cx-wr,dots_cy+yoff-wr,wr*2,wr*2,wr,w);
+                }
             }
             SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
 
@@ -1911,6 +1714,7 @@ static void draw_titlebar_dots(void){
         int   rx  = dots_x0+(int)(sel_ring_if*(float)TDOT_STEP+0.5f);
         C4 ac=THEMES[cur_theme].acc;
         C4 ring={ac.r,ac.g,ac.b,220};
+        /* selection ring stays at r2 — expanding it causes it to overlap neighbours */
         frr_aa(rx-r2-1,dots_cy+ryo-r2-1,(r2+1)*2,(r2+1)*2,r2+1,ring);
     }
     for(int i=0;i<N_THEMES;i++){
@@ -1919,6 +1723,34 @@ static void draw_titlebar_dots(void){
         float bn=tdot_bounce[i];
         int yoff=(bn>0.f)?(int)(-sinf(bn*(float)M_PI)*5.f):0;
         C4 ac=THEMES[i].acc;
+
+        /* Galaxy extra effects — drawn behind base dot, fully scaled by gf */
+        if(i==8 && galaxy_dot_f>0.15f){
+            float gf=galaxy_dot_f;
+            /* steady outer haze ring */
+            int hr=r2+2+(int)(gf*4.f);
+            C4 haze={180,60,255,(Uint8)(gf*(45+hf*35))};
+            frr_aa(cx-hr,dots_cy+yoff-hr,hr*2,hr*2,hr,haze);
+            /* tight glow ring */
+            C4 glow={230,120,255,(Uint8)(gf*(110+hf*60))};
+            frr_aa(cx-r2-1,dots_cy+yoff-r2-1,(r2+1)*2,(r2+1)*2,r2+1,glow);
+            /* spikes — reach r2+3 at full gf, all alpha scaled */
+            int sd=r2+1+(int)(gf*3.f);
+            C4 sp={255,210,255,(Uint8)(gf*230)}; sc_(sp);
+            for(int d=0;d<=1;d++){
+                SDL_RenderDrawPoint(ren,cx+d,  dots_cy+yoff-sd);
+                SDL_RenderDrawPoint(ren,cx+d,  dots_cy+yoff+sd);
+                SDL_RenderDrawPoint(ren,cx-sd, dots_cy+yoff+d);
+                SDL_RenderDrawPoint(ren,cx+sd, dots_cy+yoff+d);
+            }
+            C4 sp2={255,200,255,(Uint8)(gf*110)}; sc_(sp2);
+            SDL_RenderDrawPoint(ren,cx,      dots_cy+yoff-sd-1);
+            SDL_RenderDrawPoint(ren,cx,      dots_cy+yoff+sd+1);
+            SDL_RenderDrawPoint(ren,cx-sd-1, dots_cy+yoff);
+            SDL_RenderDrawPoint(ren,cx+sd+1, dots_cy+yoff);
+        }
+
+        /* Base dot — always at r2, same as every other dot */
         if(hf>0.02f && i!=cur_theme){
             C4 hover={ac.r,ac.g,ac.b,(Uint8)(hf*90)};
             frr_aa(cx-r2-1,dots_cy+yoff-r2-1,(r2+1)*2,(r2+1)*2,r2+1,hover);
@@ -1926,7 +1758,11 @@ static void draw_titlebar_dots(void){
         float br=0.45f+0.55f*hf;
         C4 fc={(Uint8)(ac.r*br),(Uint8)(ac.g*br),(Uint8)(ac.b*br),255};
         frr_aa(cx-r2,dots_cy+yoff-r2,r2*2,r2*2,r2,fc);
-        if(i==cur_theme){C4 w={255,255,255,180};frr_aa(cx-2,dots_cy+yoff-2,4,4,2,w);}
+        if(i==cur_theme){
+            int wr=(i==8)?2+(int)(galaxy_dot_f):2;
+            C4 w={255,255,255,(Uint8)(170+(i==8?galaxy_dot_f*40.f:10.f))};
+            frr_aa(cx-wr,dots_cy+yoff-wr,wr*2,wr*2,wr,w);
+        }
     }
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
 }
@@ -1939,14 +1775,8 @@ static void draw_tabs(void){
     {
         int ix=(int)tab_ix;
         C4 tab_bg = lerpc(C_BG, C_ACC, 0.18f); tab_bg.a=255;
-        frr_aa(ix+2, TAB_Y+4, tw-4, TAB_H-8, 6, tab_bg);
-        {
-            int sx2=ix+6, sw2=tw-12, sh=5, r3=3;
-            SDL_Rect clip2={sx2, TAB_Y+TAB_H-sh, sw2, sh};
-            SDL_RenderSetClipRect(ren, &clip2);
-            frr_aa(sx2, TAB_Y+TAB_H-sh*2, sw2, sh*2, r3, C_ACC);
-            SDL_RenderSetClipRect(ren, NULL);
-        }
+        C4 border  = C_ACC; border.a = 200;
+        bfrr_aa(ix+2, TAB_Y+3, tw-4, TAB_H-3, 6, 2, border, tab_bg);
     }
 
     for(int i=0;i<N_TABS;i++){
@@ -2528,10 +2358,10 @@ int main(int argc,char **argv){
                         /* sort dropdown item click — items live BELOW the title bar */
                         if(sort_dd_open&&sort_dd_anim>0.1f){
                             for(int i=0;i<4;i++){
-                                int item_y=TITLE_H+2+i*DD_ITEM_H;
+                                int item_y=TITLE_H+4+i*DD_ITEM_H;
                                 if(mx>=TC_X0&&mx<TC_X0+DD_W&&my>=item_y&&my<item_y+DD_ITEM_H){
                                     if(sort_mode!=(SortMode)i){ sort_mode=(SortMode)i; sfx_sort(); rebuild(); save_d(); }
-                                    break;
+                                    goto done_click; /* consumed — don't fall through to rows/tabs */
                                 }
                             }
                         }
@@ -2700,6 +2530,7 @@ int main(int argc,char **argv){
                         }
                     }
                 }
+                done_click:
                 if(ev.button.button==SDL_BUTTON_LEFT&&ev.button.clicks==2
                    &&ev.button.y<TITLE_H&&ev.button.x<win_w-3*TB_BTN_W){
                     toggle_maximize();
@@ -2847,6 +2678,8 @@ int main(int argc,char **argv){
                     if(sym==SDLK_f){ sfx_click(); srch_focus();
                         /* Ctrl+F: select all existing text */
                         if(ctrl){ srch_sel0=0; srch_cur=(int)strlen(srch); }
+                        /* Flush any pending TEXTINPUT so 'f' isn't inserted */
+                        SDL_FlushEvent(SDL_TEXTINPUT);
                     }
                     if(sym==SDLK_LEFTBRACKET){
                         int nt=(cur_theme-1+N_THEMES)%N_THEMES;
