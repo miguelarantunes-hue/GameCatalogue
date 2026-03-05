@@ -1,20 +1,28 @@
-# GAME CATALOGUE
-**MIT LICENSE | FREE & OPEN SOURCE**
+# Game Catalogue
 
-Copyright © 2026 Miguel Antunes. All rights reserved.
+A lightweight Windows desktop app to catalogue and manage your game collection. Track your wishlist, what you're playing, finished games, favourites, and more.
 
----
+## Features
 
-### 1. Permissions
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software to use, copy, and distribute it for personal, non-commercial purposes.
+- Add games with name, genre, and year
+- 7 status tags — Wishlist, Playing, Finished, Played, Dropped, Favourites, Rotation
+- List and grid view
+- Search and sort
+- Multiple themes
+- Saves automatically
 
-### 2. Restrictions
-**You may not:** * Sell or sublicense this software.
-* Distribute modified versions of this software without explicit written permission from the author.
+## Download
 
-### 3. Disclaimer
-**The software is provided "as is"**, without warranty of any kind. The author is not liable for any damages or data loss arising from use of this software.
+Get the latest installer from the [website](https://miguelarantunes-hue.github.io/GameCatalogue).
 
----
+## Build from source
 
-**Trademarks:** Game names and trademarks belong to their respective owners. This app is an independent tool and is not affiliated with any game publisher.
+Requires [MinGW](https://www.mingw-w64.org) and [SDL2 + SDL2_ttf](https://github.com/libsdl-org).
+
+```
+build.bat
+```
+
+## License
+
+MIT — free for personal use.
