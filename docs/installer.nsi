@@ -1,8 +1,8 @@
 ; ══════════════════════════════════════════════════════════════════
 ;  Game Catalogue – NSIS Installer Script
 ;
-;  Lives in:  !GAMELIST\Setup\installer.nsi
-;  Run via:   Setup\package.bat  (handles cd to project root)
+;  Lives in:  GameCatalogue\docs\installer.nsi
+;  Run via:   docs\package.bat  (handles cd to project root)
 ; ══════════════════════════════════════════════════════════════════
 
 Unicode True
