@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<!--
+╔══════════════════════════════════════════════════════════════════════╗
+║  RELEASE CHECKLIST — do all 5 steps when shipping v1.0             ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  1. NAV BADGE (line ~592)                                            ║
+║     Remove: <span class="nav-beta">Beta</span>                       ║
+║     Also delete the .nav-beta CSS rule (~line 92)                    ║
+║                                                                      ║
+║  2. HERO EYEBROW (line ~603)                                         ║
+║     Change: <p class="hero-eyebrow">Public Beta</p>                  ║
+║     To:     <p class="hero-eyebrow">Version 1.0 — Now Available</p>  ║
+║     Or remove the element entirely if you prefer no eyebrow text.    ║
+║                                                                      ║
+║  3. DOWNLOAD SUBTITLE (line ~856)                                    ║
+║     Change: "Public beta — bugs may exist..."                        ║
+║     To:     "Version 1.0 is here. Free forever. Just install & run." ║
+║                                                                      ║
+║  4. DOWNLOAD BUTTON TEXT (line ~862)                                 ║
+║     Change: Download Beta                                            ║
+║     To:     Download v1.0                                            ║
+║                                                                      ║
+║  5. VERSION META ITEM (line ~867)                                    ║
+║     Change: <span>Beta</span>Version                                 ║
+║     To:     <span>v1.0</span>Version                                 ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Game Catalogue — Track Every Game You've Ever Played</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/dejavu-sans@1.0.0/dejavu-sans.min.css" rel="stylesheet">
+<style>
+  /* DejaVu Sans — same font as the app */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* ── Site palette (swapped per theme) ── */
+    --bg:      #0a0a16;
+    --surface: #121224;
+    --border:  #16162c;
+    --text:    #e1e1f0;
+    --muted:   #737396;
+    --accent:  #6c48e4;   /* brand accent — replaces all --fav UI uses */
+
+    /* ── Status colours (constant across all themes) ── */
+    --wish:    #ffc832;
+    --played:  #44c862;
+    --playing: #28d4b2;
+    --finish:  #3490ff;
+    --dropped: #a83838;
+    --fav:     #ff426c;
+    --rotation:#9856ff;
+
+    /* ── Window preview chrome ── */
+    --wp-title:  #04040b;
+    --wp-hdr:    #060610;
+    --wp-tbar:   #0e0e1c;
+    --wp-row-a:  rgba(18,18,36,.85);
+    --wp-row-b:  rgba(15,15,30,.85);
+    --wp-row-h:  rgba(30,30,62,.9);
+    --wp-acc:    #6c48e4;
+    --wp-txt:    #e1e1f0;
+    --wp-sub:    #737396;
+    --wp-sep:    rgba(22,22,44,.6);
+    --wp-srch:   #14142a;
+
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  /* Register CSS custom properties so browsers can natively transition them */
+  @property --bg      { syntax: '<color>'; inherits: true; initial-value: #0a0a16; }
+  @property --surface { syntax: '<color>'; inherits: true; initial-value: #121224; }
+  @property --border  { syntax: '<color>'; inherits: true; initial-value: #16162c; }
+  @property --text    { syntax: '<color>'; inherits: true; initial-value: #e1e1f0; }
+  @property --muted   { syntax: '<color>'; inherits: true; initial-value: #737396; }
+  @property --accent  { syntax: '<color>'; inherits: true; initial-value: #6c48e4; }
+  @property --wp-title{ syntax: '<color>'; inherits: true; initial-value: #04040b; }
+  @property --wp-hdr  { syntax: '<color>'; inherits: true; initial-value: #060610; }
+  @property --wp-tbar { syntax: '<color>'; inherits: true; initial-value: #0e0e1c; }
+  @property --wp-acc  { syntax: '<color>'; inherits: true; initial-value: #6c48e4; }
+  @property --wp-txt  { syntax: '<color>'; inherits: true; initial-value: #e1e1f0; }
+  @property --wp-sub  { syntax: '<color>'; inherits: true; initial-value: #737396; }
+  @property --wp-srch { syntax: '<color>'; inherits: true; initial-value: #14142a; }
+
+  /* 182ms linear — matches TC_SPEED 5.5 in main.c */
+  :root {
+    transition:
+      --bg 0.18s linear, --surface 0.18s linear, --border 0.18s linear,
+      --text 0.18s linear, --muted 0.18s linear, --accent 0.18s linear,
+      --wp-title 0.18s linear, --wp-hdr 0.18s linear, --wp-tbar 0.18s linear,
+      --wp-acc 0.18s linear, --wp-txt 0.18s linear, --wp-sub 0.18s linear,
+      --wp-srch 0.18s linear;
+  }
+
+  .btn-primary { transition: transform .2s, filter .18s linear; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── NOISE OVERLAY ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    background-size: 200px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── GLOW BLOBS ── */
+  .blob {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(120px);
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.18;
+  }
+  .blob-1 { width: 600px; height: 600px; background: var(--accent);  top: -200px; right: -150px; }
+  .blob-2 { width: 500px; height: 500px; background: var(--accent);  bottom: -150px; left: -100px; opacity: 0.10; }
+  .blob-3 { width: 350px; height: 350px; background: var(--accent);  top: 45%; left: 40%; opacity: 0.08; }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 48px;
+    height: 60px;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-logo {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 18px;
+    letter-spacing: 1px;
+    color: var(--text);
+  }
+  .nav-logo span { color: var(--accent); }
+  .nav-links { display: flex; gap: 36px; }
+  .nav-links a {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .2s;
+  }
+  .nav-links a:hover { color: var(--text); }
+
+  /* ── BETA BADGE ── */
+  /* TUTORIAL — v1.0: remove the entire .nav-beta rule (and the HTML element) */
+  .nav-beta {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--wish);
+    border: 1px solid rgba(255,200,50,.4);
+    background: rgba(255,200,50,.08);
+    padding: 3px 8px;
+    border-radius: 100px;
+    margin-left: 12px;
+    vertical-align: middle;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 100px 24px 80px;
+  }
+
+  .hero-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+    opacity: 0;
+    animation: fadeUp .6s .1s forwards;
+  }
+
+  h1 {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: clamp(48px, 7vw, 96px);
+    line-height: 1.0;
+    letter-spacing: 1px;
+    margin-bottom: 32px;
+    opacity: 0;
+    animation: fadeUp .7s .2s forwards;
+  }
+  h1 em {
+    font-style: normal;
+    -webkit-text-stroke: 1.5px var(--accent);
+    color: transparent;
+  }
+
+  .hero-sub {
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--muted);
+    max-width: 560px;
+    line-height: 1.7;
+    margin-bottom: 52px;
+    opacity: 0;
+    animation: fadeUp .7s .35s forwards;
+  }
+
+  .cta-group {
+    display: flex; gap: 16px; align-items: center;
+    flex-wrap: wrap; justify-content: center;
+    opacity: 0;
+    animation: fadeUp .7s .5s forwards;
+  }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 12px;
+    background: var(--accent);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding: 16px 36px;
+    border-radius: 4px;
+    box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .btn-primary:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 60px color-mix(in srgb, var(--accent) 55%, transparent);
+    filter: brightness(1.15);
+  }
+  .btn-primary svg { flex-shrink: 0; }
+
+  .btn-secondary {
+    display: inline-flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding: 16px 28px;
+    border-radius: 4px;
+    transition: border-color .2s, color .2s;
+  }
+  .btn-secondary:hover { border-color: var(--text); color: var(--text); }
+
+  /* platform badge */
+  .platform-note {
+    margin-top: 24px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0;
+    animation: fadeUp .7s .65s forwards;
+  }
+  .platform-note span { color: var(--played); }
+
+  /* ── STATUS PILLS DEMO ── */
+  .status-demo {
+    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    margin-top: 64px;
+    opacity: 0;
+    animation: fadeUp .7s .75s forwards;
+  }
+  .spill {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 5px 14px;
+    border-radius: 100px;
+    border: 1px solid;
+    font-weight: 700;
+  }
+  .spill-wl  { color: var(--wish);     border-color: var(--wish);     background: rgba(255,200,50,.08); }
+  .spill-pd  { color: var(--played);   border-color: var(--played);   background: rgba(68,200,98,.08); }
+  .spill-in  { color: var(--playing);  border-color: var(--playing);  background: rgba(40,212,178,.08); }
+  .spill-fn  { color: var(--finish);   border-color: var(--finish);   background: rgba(52,140,255,.08); }
+  .spill-dr  { color: var(--dropped);  border-color: var(--dropped);  background: rgba(168,56,56,.08); }
+  .spill-fv  { color: var(--fav);      border-color: var(--fav);      background: rgba(255,66,108,.08); }
+  .spill-rt  { color: var(--rotation); border-color: var(--rotation); background: rgba(152,86,255,.08); }
+
+  /* ── MOCK APP WINDOW ── */
+  .app-preview {
+    position: relative; z-index: 1;
+    padding: 0 24px 100px;
+    display: flex; justify-content: center;
+  }
+  .window {
+    width: 100%;
+    max-width: 900px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 40px 120px rgba(0,0,0,0.7);
+    animation: riseIn .9s .4s both;
+  }
+  @keyframes riseIn {
+    from { opacity:0; transform: translateY(40px) scale(.97); }
+    to   { opacity:1; transform: translateY(0)    scale(1); }
+  }
+
+  /* Title bar — sort pills · separator · view icons · theme dots · window btns */
+  .win-titlebar {
+    background: var(--wp-title);
+    height: 34px;
+    display: flex; align-items: center;
+    padding: 0 0 0 8px;
+    gap: 0;
+    border-bottom: 1px solid var(--wp-sep);
+  }
+  .win-sort-group { display: flex; gap: 4px; align-items: center; }
+  .win-sort-pill {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 10px;
+    height: 22px; width: 68px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 5px;
+    color: var(--wp-sub);
+    cursor: default;
+    transition: background .4s, color .4s;
+  }
+  .win-sort-pill.active {
+    background: color-mix(in srgb, var(--wp-acc) 35%, transparent);
+    color: var(--wp-txt);
+  }
+  .win-tb-sep {
+    width: 1px; height: 14px;
+    background: var(--wp-sep);
+    margin: 0 8px;
+    opacity: .8;
+  }
+  .win-view-group { display: flex; gap: 4px; align-items: center; }
+  .win-view-btn {
+    width: 32px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 5px;
+    cursor: default;
+    transition: background .4s;
+  }
+  .win-view-btn.active { background: color-mix(in srgb, var(--wp-acc) 35%, transparent); }
+  .win-view-btn svg { display: block; }
+  .win-theme-dots {
+    display: flex; gap: 8px; align-items: center;
+    margin-left: 10px;
+  }
+  /* Sliding selection ring — mirrors the outline in the app */
+  #dot-ring {
+    position: absolute;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.75);
+    pointer-events: none;
+    top: 50%; transform: translate(0, -50%);
+    transition: left 0.18s linear;
+    left: -3px;
+  }
+  .win-theme-dots { position: relative; }
+
+  .win-wbtns { display: flex; margin-left: auto; }
+  .win-wbtn {
+    width: 42px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--wp-sub);
+    cursor: default; transition: background .15s, color .15s;
+  }
+  .win-wbtn:hover { background: rgba(255,255,255,.07); color: var(--wp-txt); }
+  .win-wbtn-close:hover { background: #c42b1c; color: #fff; }
+
+  /* Header — app title left, search right */
+  .win-header {
+    background: var(--wp-hdr);
+    height: 68px;
+    padding: 0 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--wp-sep);
+    gap: 20px;
+  }
+  .win-app-title {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 18px;
+    letter-spacing: 3px;
+    color: var(--wp-txt);
+    white-space: nowrap;
+  }
+  .win-search {
+    flex: 1; max-width: 380px;
+    background: var(--wp-srch);
+    border: 1px solid var(--wp-sep);
+    border-radius: 8px;
+    height: 34px;
+    display: flex; align-items: center;
+    padding: 0 10px 0 12px;
+    gap: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--wp-sub);
+  }
+  .win-search-hint {
+    margin-left: auto;
+    font-family: var(--mono); font-size: 9px;
+    color: color-mix(in srgb, var(--wp-sub) 50%, transparent);
+    border: 1px solid color-mix(in srgb, var(--wp-sub) 25%, transparent);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  /* Tabs */
+  .win-tabs {
+    display: flex; border-bottom: 1px solid var(--wp-sep);
+    background: var(--wp-tbar);
+  }
+  .win-tab {
+    flex: 1; text-align: center;
+    font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .8px; text-transform: uppercase;
+    padding: 11px 2px 9px;
+    color: var(--wp-sub);
+    position: relative;
+    cursor: default;
+  }
+  .win-tab.active-all  { color: var(--rotation); }
+  .win-tab.active-wl   { color: var(--wish); }
+  .win-tab.active-pd   { color: var(--played); }
+  .win-tab.active-in   { color: var(--playing); }
+  .win-tab.active-fn   { color: var(--finish); }
+  .win-tab.active-dr   { color: var(--dropped); }
+  .win-tab.active-fv   { color: var(--fav); }
+  .win-tab.active-rt   { color: var(--rotation); }
+  .win-tab[class*="active"]::after {
+    content: '';
+    position: absolute; bottom: 0; left: 6px; right: 6px;
+    height: 3px; border-radius: 3px 3px 0 0;
+    background: currentColor; opacity: .85;
+  }
+  .win-tab[class*="active"] { background: rgba(255,255,255,.03); }
+
+  /* Rows */
+  .win-rows { padding: 4px 0 0; }
+  .win-row {
+    display: flex; align-items: center;
+    padding: 0 12px;
+    height: 52px;
+    margin: 0 4px;
+    border-radius: 7px;
+    transition: background .4s;
+  }
+  .win-row:nth-child(odd)  { background: var(--wp-row-a); }
+  .win-row:nth-child(even) { background: var(--wp-row-b); }
+  .win-row:hover           { background: var(--wp-row-h); }
+  .win-row-name { flex: 1; font-size: 13px; font-weight: 400; color: var(--wp-txt); padding-right: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .win-row-year { font-family: var(--mono); font-size: 11px; color: var(--wp-sub); width: 40px; text-align: right; margin-right: 12px; }
+  .win-btns { display: flex; gap: 3px; }
+  .win-btn {
+    width: 24px; height: 24px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 8px; font-weight: 700;
+    letter-spacing: .5px; cursor: default;
+    border: 1px solid transparent;
+  }
+  .wb-wl { background: rgba(255,200,50,.15); color: var(--wish);    border-color: rgba(255,200,50,.25); }
+  .wb-pd { background: rgba(68,200,98,.15);  color: var(--played);  border-color: rgba(68,200,98,.25); }
+  .wb-in { background: rgba(40,212,178,.18); color: var(--playing); border-color: rgba(40,212,178,.3); }
+  .wb-fn { background: rgba(52,140,255,.2);  color: var(--finish);  border-color: rgba(52,140,255,.35); }
+  .wb-dr { background: rgba(168,56,56,.2);   color: var(--dropped); border-color: rgba(168,56,56,.3); }
+  .wb-fv { background: rgba(255,66,108,.15); color: var(--fav);     border-color: rgba(255,66,108,.3); }
+  .wb-rt { background: rgba(152,86,255,.18); color: var(--rotation);border-color: rgba(152,86,255,.3); }
+  .wb-off{ background: rgba(255,255,255,.03); color: rgba(255,255,255,.12); border-color: rgba(255,255,255,.07); }
+
+  /* Page bar */
+  .win-pagebar {
+    background: var(--wp-title);
+    height: 54px;
+    border-top: 1px solid var(--wp-sep);
+    display: flex; align-items: center;
+    padding: 0 14px;
+    position: relative;
+  }
+  .win-pg-btn {
+    display: flex; align-items: center; gap: 5px;
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 11px;
+    color: var(--wp-sub);
+    border: 1px solid var(--wp-sep);
+    border-radius: 8px;
+    padding: 0 14px;
+    height: 30px;
+    cursor: default;
+    transition: border-color .3s, color .3s, background .3s;
+  }
+  .win-pg-btn:hover {
+    border-color: color-mix(in srgb, var(--wp-acc) 60%, transparent);
+    color: var(--wp-txt);
+    background: color-mix(in srgb, var(--wp-acc) 8%, transparent);
+  }
+  .win-pg-btn-arrow { font-size: 10px; color: var(--wp-acc); opacity: .7; }
+  .win-pg-center {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .win-pg-dots { display: flex; gap: 9px; align-items: center; }
+  .win-pg-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--wp-sep);
+    transition: background .4s, transform .3s;
+  }
+  .win-pg-dot.cur {
+    background: var(--wp-acc);
+    transform: scale(1.25);
+  }
+  .win-pg-label {
+    font-family: var(--mono); font-size: 9px;
+    color: color-mix(in srgb, var(--wp-sub) 70%, transparent);
+    letter-spacing: .5px;
+  }
+
+  /* Status bar */
+  .win-sbar {
+    background: var(--wp-title);
+    height: 26px;
+    border-top: 1px solid color-mix(in srgb, var(--wp-acc) 12%, transparent);
+    display: flex; align-items: center;
+    padding: 0 10px;
+  }
+  .win-sbar-left {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 10px; color: var(--wp-sub);
+  }
+  .win-sbar-right {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .win-sbar-item {
+    display: flex; align-items: center; gap: 3px;
+    font-family: var(--mono); font-size: 9px; color: rgba(255,255,255,.3);
+  }
+  .win-sbar-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+  }
+
+  /* ── FEATURES ── */
+  .section {
+    position: relative; z-index: 1;
+    max-width: 1100px; margin: 0 auto;
+    padding: 100px 24px;
+  }
+  .section-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: clamp(32px, 4.5vw, 56px);
+    line-height: 1.05;
+    letter-spacing: 0px;
+    margin-bottom: 60px;
+  }
+  .section-title em { font-style: normal; color: var(--accent); }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 2px;
+  }
+  .feat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 36px 32px;
+    transition: border-color .2s, transform .2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .feat::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent, var(--fav));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .3s;
+  }
+  .feat:hover { border-color: color-mix(in srgb, var(--accent) 25%, transparent); transform: translateY(-4px); }
+  .feat:hover::before { transform: scaleX(1); }
+  .feat-icon {
+    font-size: 28px; margin-bottom: 18px;
+  }
+  .feat h3 {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 18px; letter-spacing: 1.5px;
+    margin-bottom: 10px;
+  }
+  .feat p {
+    font-size: 14px; line-height: 1.7;
+    color: var(--muted);
+  }
+
+  /* ── STATUS SECTION ── */
+  .statuses-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .status-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 24px 20px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: transform .2s, border-color .2s;
+  }
+  .status-card:hover { transform: translateY(-3px); }
+  .status-badge {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    font-weight: 700;
+    width: fit-content;
+    padding: 4px 12px;
+    border-radius: 100px;
+    border: 1px solid currentColor;
+  }
+  .status-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  /* ── DOWNLOAD SECTION ── */
+  .download-section {
+    position: relative; z-index: 1;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 100px 24px;
+    text-align: center;
+    overflow: hidden;
+  }
+  .download-section::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 800px; height: 400px;
+    background: radial-gradient(ellipse, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .dl-title {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: clamp(48px, 8vw, 96px);
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+  }
+  .dl-sub {
+    font-size: 16px; color: var(--muted);
+    margin-bottom: 40px; max-width: 420px; margin-left: auto; margin-right: auto;
+    line-height: 1.6;
+  }
+  .dl-meta {
+    display: flex; justify-content: center; gap: 32px;
+    flex-wrap: wrap; margin-top: 32px;
+  }
+  .dl-meta-item {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .dl-meta-item span { color: var(--text); display: block; font-size: 14px; margin-bottom: 4px; }
+
+
+
+
+  /* ── LICENSE ── */
+  .license-box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 40px 48px; max-width: 800px; position: relative; overflow: hidden; }
+  .license-box::before { content: '§'; position: absolute; right: 32px; top: 16px; font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif; font-size: 90px; color: var(--border); line-height: 1; pointer-events: none; }
+  .license-box h3 { font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif; font-size: 24px; letter-spacing: 1px; margin-bottom: 8px; }
+  .license-type { font-family: var(--mono); font-size: 11px; color: var(--played); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 24px; display: block; }
+  .license-text { font-size: 13px; line-height: 1.9; color: var(--muted); display: flex; flex-direction: column; gap: 14px; }
+  .license-text strong { color: var(--text); font-weight: 500; }
+  /* ── FOOTER ── */
+  footer {
+    position: relative; z-index: 1;
+    text-align: center;
+    padding: 40px 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+  footer a { color: var(--fav); text-decoration: none; }
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  /* ── THEME TOAST (easter egg notification) ── */
+  #theme-toast {
+    position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 10px 20px; border-radius: 6px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--text);
+    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+    opacity: 0; pointer-events: none; z-index: 9999;
+    transition: opacity .3s, transform .3s, border-color .5s, background .5s;
+    white-space: nowrap;
+  }
+  #theme-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+<div class="blob blob-3"></div>
+
+<!-- NAV -->
+<!-- TUTORIAL — v1.0: remove the <span class="nav-beta">Beta</span> element below -->
+<nav>
+  <div class="nav-logo">GAME<span>CAT</span><span class="nav-beta">Beta</span></div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#statuses">Statuses</a>
+    <a href="#download">Download</a>
+    <a href="#license">License</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<!-- TUTORIAL — v1.0: change the hero-eyebrow text from "Public Beta" to "Version 1.0 — Now Available" or remove it entirely -->
+<section class="hero">
+  <p class="hero-eyebrow">Public Beta</p>
+  <h1>YOUR GAME<br><em>CATALOGUE</em></h1>
+  <p class="hero-sub">Track every game you've ever played, want to play, or abandoned at 3am. A blazing-fast desktop app built for serious gamers.</p>
+  <div class="cta-group">
+    <a href="#download" class="btn-primary">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 21h18"/></svg>
+      Download Free
+    </a>
+    <a href="#features" class="btn-secondary">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+      See Features
+    </a>
+  </div>
+  <p class="platform-note">Windows · Free · No account required · <span>SDL2-powered</span></p>
+  <div class="status-demo">
+    <span class="spill spill-wl">Wishlist</span>
+    <span class="spill spill-pd">Played</span>
+    <span class="spill spill-in">Playing</span>
+    <span class="spill spill-fn">Finished</span>
+    <span class="spill spill-dr">Dropped</span>
+    <span class="spill spill-fv">Favourite</span>
+    <span class="spill spill-rt">Rotation</span>
+  </div>
+</section>
+
+<!-- APP PREVIEW -->
+<div class="app-preview">
+  <div class="window">
+
+    <!-- Title bar: sort pills | separator | view icons | theme dots | window buttons -->
+    <div class="win-titlebar">
+      <div class="win-sort-group">
+        <div class="win-sort-pill active">A ↑ Z</div>
+        <div class="win-sort-pill">Z ↓ A</div>
+        <div class="win-sort-pill">Newest</div>
+        <div class="win-sort-pill">Oldest</div>
+      </div>
+      <div class="win-tb-sep"></div>
+      <div class="win-view-group">
+        <!-- List view icon (3 lines) -->
+        <div class="win-view-btn active">
+          <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+            <rect x="0" y="0" width="14" height="2" rx="1" fill="rgba(232,234,240,.7)"/>
+            <rect x="0" y="4" width="14" height="2" rx="1" fill="rgba(232,234,240,.7)"/>
+            <rect x="0" y="8" width="14" height="2" rx="1" fill="rgba(232,234,240,.7)"/>
+          </svg>
+        </div>
+        <!-- Grid view icon (2×2) -->
+        <div class="win-view-btn">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <rect x="0" y="0" width="5" height="5" rx="1" fill="rgba(107,114,128,.6)"/>
+            <rect x="7" y="0" width="5" height="5" rx="1" fill="rgba(107,114,128,.6)"/>
+            <rect x="0" y="7" width="5" height="5" rx="1" fill="rgba(107,114,128,.6)"/>
+            <rect x="7" y="7" width="5" height="5" rx="1" fill="rgba(107,114,128,.6)"/>
+          </svg>
+        </div>
+      </div>
+      <!-- 8 theme colour dots — drawn on canvas exactly like the C code -->
+      <canvas id="dotCanvas" style="display:block;cursor:pointer;margin-left:10px"></canvas>
+      <div class="win-wbtns">
+        <div class="win-wbtn win-wbtn-min">&#8211;</div>
+        <div class="win-wbtn win-wbtn-max">&#9633;</div>
+        <div class="win-wbtn win-wbtn-close">&#10005;</div>
+      </div>
+    </div>
+
+    <!-- Header: app title left, search box right -->
+    <div class="win-header">
+      <div class="win-app-title">GAME CATALOGUE</div>
+      <div class="win-search">
+        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Search games...
+        <span class="win-search-hint">[F]</span>
+      </div>
+    </div>
+
+    <!-- Tabs: correct order, each with its own status colour when active -->
+    <div class="win-tabs">
+      <div class="win-tab">All</div>
+      <div class="win-tab">Wishlist</div>
+      <div class="win-tab">Played</div>
+      <div class="win-tab active-in">Playing</div>
+      <div class="win-tab">Finished</div>
+      <div class="win-tab">Dropped</div>
+      <div class="win-tab">Favourites</div>
+      <div class="win-tab">Rotation</div>
+    </div>
+
+    <!-- Rows: name · year · 7 status buttons (no genre column) -->
+    <div class="win-rows">
+      <div class="win-row">
+        <div class="win-row-name">Elden Ring</div>
+        <div class="win-row-year">2022</div>
+        <div class="win-btns">
+          <div class="win-btn wb-off">WL</div><div class="win-btn wb-off">PD</div>
+          <div class="win-btn wb-in">IN</div><div class="win-btn wb-off">FN</div>
+          <div class="win-btn wb-off">DR</div><div class="win-btn wb-fv">FV</div>
+          <div class="win-btn wb-off">RT</div>
+        </div>
+      </div>
+      <div class="win-row">
+        <div class="win-row-name">Baldur's Gate 3</div>
+        <div class="win-row-year">2023</div>
+        <div class="win-btns">
+          <div class="win-btn wb-off">WL</div><div class="win-btn wb-off">PD</div>
+          <div class="win-btn wb-in">IN</div><div class="win-btn wb-off">FN</div>
+          <div class="win-btn wb-off">DR</div><div class="win-btn wb-off">FV</div>
+          <div class="win-btn wb-rt">RT</div>
+        </div>
+      </div>
+      <div class="win-row">
+        <div class="win-row-name">Hollow Knight</div>
+        <div class="win-row-year">2017</div>
+        <div class="win-btns">
+          <div class="win-btn wb-off">WL</div><div class="win-btn wb-pd">PD</div>
+          <div class="win-btn wb-off">IN</div><div class="win-btn wb-fn">FN</div>
+          <div class="win-btn wb-off">DR</div><div class="win-btn wb-fv">FV</div>
+          <div class="win-btn wb-off">RT</div>
+        </div>
+      </div>
+      <div class="win-row">
+        <div class="win-row-name">Monster Hunter Wilds</div>
+        <div class="win-row-year">2025</div>
+        <div class="win-btns">
+          <div class="win-btn wb-wl">WL</div><div class="win-btn wb-off">PD</div>
+          <div class="win-btn wb-off">IN</div><div class="win-btn wb-off">FN</div>
+          <div class="win-btn wb-off">DR</div><div class="win-btn wb-off">FV</div>
+          <div class="win-btn wb-off">RT</div>
+        </div>
+      </div>
+      <div class="win-row">
+        <div class="win-row-name">Cyberpunk 2077</div>
+        <div class="win-row-year">2020</div>
+        <div class="win-btns">
+          <div class="win-btn wb-off">WL</div><div class="win-btn wb-pd">PD</div>
+          <div class="win-btn wb-off">IN</div><div class="win-btn wb-off">FN</div>
+          <div class="win-btn wb-dr">DR</div><div class="win-btn wb-off">FV</div>
+          <div class="win-btn wb-off">RT</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Page bar -->
+    <div class="win-pagebar">
+      <div class="win-pg-btn"><span class="win-pg-btn-arrow">‹</span> Prev</div>
+      <div class="win-pg-center">
+        <div class="win-pg-dots">
+          <div class="win-pg-dot"></div>
+          <div class="win-pg-dot cur"></div>
+          <div class="win-pg-dot"></div>
+          <div class="win-pg-dot"></div>
+          <div class="win-pg-dot"></div>
+        </div>
+        <div class="win-pg-label">2 / 5</div>
+      </div>
+      <div class="win-pg-btn" style="margin-left:auto">Next <span class="win-pg-btn-arrow">›</span></div>
+    </div>
+
+    <!-- Status bar -->
+    <div class="win-sbar">
+      <div class="win-sbar-left">2500 games</div>
+      <div class="win-sbar-right">
+        <div class="win-sbar-item"><div class="win-sbar-dot" style="background:var(--playing)"></div>12</div>
+        <div class="win-sbar-item"><div class="win-sbar-dot" style="background:var(--finish)"></div>47</div>
+        <div class="win-sbar-item"><div class="win-sbar-dot" style="background:var(--fav)"></div>8</div>
+        <div class="win-sbar-item"><div class="win-sbar-dot" style="background:var(--wish)"></div>31</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<section class="section" id="features">
+  <p class="section-label">Why it slaps</p>
+  <h2 class="section-title">BUILT FOR<br><em>REAL GAMERS</em></h2>
+  <div class="features-grid">
+    <div class="feat" style="--accent: var(--fav)">
+      <div class="feat-icon">🎮</div>
+      <h3>2,500+ Games</h3>
+      <p>A massive pre-loaded database spanning every genre — from AAA blockbusters to hidden indie gems. Find any game instantly.</p>
+    </div>
+    <div class="feat" style="--accent: var(--playing)">
+      <div class="feat-icon">🔍</div>
+      <h3>Instant Search</h3>
+      <p>Animated search box with live filtering. Full keyboard support including Ctrl shortcuts, word-jump, and text selection.</p>
+    </div>
+    <div class="feat" style="--accent: var(--wish)">
+      <div class="feat-icon">📑</div>
+      <h3>8 Smart Tabs</h3>
+      <p>All, Wishlist, Played, Playing, Finished, Dropped, Favourites, Rotation. Your library, always perfectly organised.</p>
+    </div>
+    <div class="feat" style="--accent: var(--finish)">
+      <div class="feat-icon">⚡</div>
+      <h3>Lightning Fast</h3>
+      <p>SDL2-powered native desktop app. No Electron, no browser, no bloat. Smooth 60fps rendering even with thousands of entries.</p>
+    </div>
+    <div class="feat" style="--accent: var(--rotation)">
+      <div class="feat-icon">🖼️</div>
+      <h3>List & Grid View</h3>
+      <p>Switch between a dense list layout and a visual grid. Sort by name or year, ascending or descending.</p>
+    </div>
+    <div class="feat" style="--accent: var(--played)">
+      <div class="feat-icon">💾</div>
+      <h3>Auto-Save</h3>
+      <p>Your progress is saved automatically to a local binary file. No cloud, no account — just your data on your machine.</p>
+    </div>
+    <div class="feat" style="--accent: var(--fav)">
+      <div class="feat-icon">🎨</div>
+      <h3>Multiple Themes</h3>
+      <p>Cycle through built-in colour themes on the fly with [ ] keys. Find a look that fits your setup.</p>
+    </div>
+    <div class="feat" style="--accent: var(--wish)">
+      <div class="feat-icon">🖥️</div>
+      <h3>Custom Window</h3>
+      <p>Frameless borderless design with custom title bar, drag-to-resize from any edge, and smooth maximise animation.</p>
+    </div>
+  </div>
+</section>
+
+<!-- STATUSES -->
+<section class="section" id="statuses">
+  <p class="section-label">Track Your Progress</p>
+  <h2 class="section-title">7 <em>STATUSES</em></h2>
+  <div class="statuses-grid">
+    <div class="status-card" style="border-color: rgba(255,200,50,.2)">
+      <span class="status-badge" style="color: var(--wish)">WL · Wishlist</span>
+      <p class="status-desc">Games you want to play someday. Your backlog begins here.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(68,200,98,.2)">
+      <span class="status-badge" style="color: var(--played)">PD · Played</span>
+      <p class="status-desc">You've touched it. Doesn't matter for how long.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(40,212,178,.2)">
+      <span class="status-badge" style="color: var(--playing)">IN · Playing</span>
+      <p class="status-desc">Currently in progress. Your active session tracker.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(52,140,255,.2)">
+      <span class="status-badge" style="color: var(--finish)">FN · Finished</span>
+      <p class="status-desc">Credits rolled. Main story done. Well earned.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(168,56,56,.2)">
+      <span class="status-badge" style="color: var(--dropped)">DR · Dropped</span>
+      <p class="status-desc">Life's too short for bad games. No shame.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(255,66,108,.2)">
+      <span class="status-badge" style="color: var(--fav)">FV · Favourite</span>
+      <p class="status-desc">The all-timers. Games that left a mark.</p>
+    </div>
+    <div class="status-card" style="border-color: rgba(152,86,255,.2)">
+      <span class="status-badge" style="color: var(--rotation)">RT · Rotation</span>
+      <p class="status-desc">Games you return to repeatedly. Your comfort picks.</p>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section class="download-section" id="download">
+  <p class="dl-title">GET THE APP</p>
+  <!-- TUTORIAL — v1.0: change the paragraph below from the beta disclaimer to something like:
+       "Version 1.0 is here. Free forever. Just install and run."                          -->
+  <p class="dl-sub">Public beta — bugs may exist and features may change. Free download, no account required.</p>
+  <div class="cta-group" style="justify-content:center">
+    <a href="GameCatalogue-Setup-Latest.exe" class="btn-primary" download>
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 21h18"/></svg>
+      <!-- TUTORIAL — v1.0: change button text below from "Download Beta" to "Download v1.0" -->
+      Download Beta
+    </a>
+  </div>
+  <div class="dl-meta">
+    <div class="dl-meta-item"><span>Windows</span>Platform</div>
+    <!-- TUTORIAL — v1.0: change the version meta item below from "Beta" to "v1.0" -->
+    <div class="dl-meta-item"><span>Beta</span>Version</div>
+    <div class="dl-meta-item"><span>Free</span>Price</div>
+    <div class="dl-meta-item"><span>SDL2</span>Engine</div>
+  </div>
+</section>
+
+
+<!-- LICENSE -->
+<section class="section" id="license">
+  <p class="section-label">Legal</p>
+  <h2 class="section-title">LI<em>CENSE</em></h2>
+  <div class="license-box">
+    <h3>Game Catalogue</h3>
+    <span class="license-type">MIT License · Free &amp; Open Source</span>
+    <div class="license-text">
+      <p>Copyright &copy; 2026 Miguel Antunes. All rights reserved.</p>
+      <p><strong>Permission is hereby granted, free of charge,</strong> to any person obtaining a copy of this software to use, copy, and distribute it for personal, non-commercial purposes.</p>
+      <p><strong>You may not:</strong> sell, sublicense, or distribute modified versions of this software without explicit written permission from the author.</p>
+      <p><strong>The software is provided "as is",</strong> without warranty of any kind. The author is not liable for any damages or data loss arising from use of this software.</p>
+      <p>Game names and trademarks belong to their respective owners. This app is an independent tool and is not affiliated with any game publisher.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Game Catalogue · Built with SDL2 · <a href="#download">Download</a> · Free &amp; Open</p>
+</footer>
+
+<div id="theme-toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  THEME ENGINE  +  CANVAS DOT RENDERER
+//  Mirrors main.c exactly:
+//    TC_SPEED = 5.5   → colour lerp done in ~182 ms, linear
+//    sel_ring_if      → ring x position settles at dt*20
+//    tdot_bounce[i]   → decays at dt*5.5, yoff = -sin(bounce*PI)*5
+//    draw_titlebar_dots() ported 1:1 to canvas
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Colour helpers ────────────────────────────────────────────────
+function parseCol(s) {
+  s = s.trim();
+  if (/^#[0-9a-f]{6}$/i.test(s)) {
+    const n = parseInt(s.slice(1), 16);
+    return [(n>>16)&255, (n>>8)&255, n&255, 1];
+  }
+  const m = s.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)/);
+  if (m) return [+m[1], +m[2], +m[3], m[4]!==undefined ? +m[4] : 1];
+  return [0,0,0,1];
+}
+function lerpc(a, b, t) {
+  return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t];
+}
+function colStr(c) {
+  const r=Math.round(c[0]), g=Math.round(c[1]), b=Math.round(c[2]);
+  return c[3]>=1 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${+c[3].toFixed(3)})`;
+}
+
+// ── Theme data ────────────────────────────────────────────────────
+const THEMES = [
+  { name:'VOID',    ac:'#6c48e4', bg:'#0a0a16',surface:'#121224',border:'#16162c',text:'#e1e1f0',muted:'#737396',accent:'#6c48e4',
+    wp:{title:'#04040b',hdr:'#060610',tbar:'#0e0e1c',rowA:'rgba(18,18,36,.85)',rowB:'rgba(15,15,30,.85)',rowH:'rgba(30,30,62,.9)',acc:'#6c48e4',txt:'#e1e1f0',sub:'#737396',sep:'rgba(22,22,44,.6)',srch:'#14142a'} },
+  { name:'OCEAN',   ac:'#00bcd4', bg:'#060c18',surface:'#0a1226',border:'#0e162e',text:'#dcebf5',muted:'#648caa',accent:'#00bcd4',
+    wp:{title:'#03060e',hdr:'#040812',tbar:'#080e1c',rowA:'rgba(10,18,38,.85)',rowB:'rgba(8,15,32,.85)',rowH:'rgba(18,32,64,.9)',acc:'#00bcd4',txt:'#dcebf5',sub:'#648caa',sep:'rgba(14,22,46,.6)',srch:'#0a1428'} },
+  { name:'FOREST',  ac:'#38c850', bg:'#060e08',surface:'#0a140c',border:'#0e1a10',text:'#d7f0dc',muted:'#64966e',accent:'#38c850',
+    wp:{title:'#030704',hdr:'#040a06',tbar:'#08120a',rowA:'rgba(10,20,12,.85)',rowB:'rgba(8,16,10,.85)',rowH:'rgba(18,38,22,.9)',acc:'#38c850',txt:'#d7f0dc',sub:'#64966e',sep:'rgba(14,26,16,.6)',srch:'#0a160c'} },
+  { name:'CRIMSON', ac:'#e63848', bg:'#120608',surface:'#1e0a0c',border:'#1c0a0c',text:'#f5dcde',muted:'#a06469',accent:'#e63848',
+    wp:{title:'#090304',hdr:'#0d0406',tbar:'#16080a',rowA:'rgba(30,10,12,.85)',rowB:'rgba(24,8,10,.85)',rowH:'rgba(50,18,20,.9)',acc:'#e63848',txt:'#f5dcde',sub:'#a06469',sep:'rgba(28,10,12,.6)',srch:'#180a0c'} },
+  { name:'AMBER',   ac:'#e6aa28', bg:'#120c04',surface:'#1c1208',border:'#1a1006',text:'#f8eed2',muted:'#a08a5a',accent:'#e6aa28',
+    wp:{title:'#090602',hdr:'#0d0903',tbar:'#160f06',rowA:'rgba(28,18,8,.85)',rowB:'rgba(24,15,6,.85)',rowH:'rgba(46,30,12,.9)',acc:'#e6aa28',txt:'#f8eed2',sub:'#a08a5a',sep:'rgba(26,16,6,.6)',srch:'#160e06'} },
+  { name:'SLATE',   ac:'#64a0dc', bg:'#0c0e10',surface:'#14161a',border:'#16181c',text:'#dce1e6',muted:'#78808a',accent:'#64a0dc',
+    wp:{title:'#060709',hdr:'#080a0c',tbar:'#101215',rowA:'rgba(20,22,26,.85)',rowB:'rgba(17,19,22,.85)',rowH:'rgba(32,36,42,.9)',acc:'#64a0dc',txt:'#dce1e6',sub:'#78808a',sep:'rgba(22,24,28,.6)',srch:'#121418'} },
+  { name:'ROSE',    ac:'#e63ca0', bg:'#12060e',surface:'#1e0a18',border:'#1a0a15',text:'#f5dcee',muted:'#a0648c',accent:'#e63ca0',
+    wp:{title:'#090307',hdr:'#0d040a',tbar:'#160811',rowA:'rgba(30,10,24,.85)',rowB:'rgba(24,8,19,.85)',rowH:'rgba(50,18,40,.9)',acc:'#e63ca0',txt:'#f5dcee',sub:'#a0648c',sep:'rgba(26,10,21,.6)',srch:'#180a14'} },
+  { name:'NORD',    ac:'#88c0d0', bg:'#12141c',surface:'#1e202c',border:'#1e202e',text:'#eceff4',muted:'#828ca0',accent:'#88c0d0',
+    wp:{title:'#0a0c11',hdr:'#0e1016',tbar:'#161820',rowA:'rgba(30,32,44,.85)',rowB:'rgba(26,28,38,.85)',rowH:'rgba(46,50,68,.9)',acc:'#88c0d0',txt:'#eceff4',sub:'#828ca0',sep:'rgba(30,32,46,.6)',srch:'#1a1c28'} },
+];
+
+const N = THEMES.length;
+
+// CSS var slots (site palette + window chrome)
+const SLOTS = [
+  ['--bg',       t => t.bg],
+  ['--surface',  t => t.surface],
+  ['--border',   t => t.border],
+  ['--text',     t => t.text],
+  ['--muted',    t => t.muted],
+  ['--accent',   t => t.accent],
+  ['--wp-title', t => t.wp.title],
+  ['--wp-hdr',   t => t.wp.hdr],
+  ['--wp-tbar',  t => t.wp.tbar],
+  ['--wp-row-a', t => t.wp.rowA],
+  ['--wp-row-b', t => t.wp.rowB],
+  ['--wp-row-h', t => t.wp.rowH],
+  ['--wp-acc',   t => t.wp.acc],
+  ['--wp-txt',   t => t.wp.txt],
+  ['--wp-sub',   t => t.wp.sub],
+  ['--wp-sep',   t => t.wp.sep],
+  ['--wp-srch',  t => t.wp.srch],
+];
+
+const cssRoot = document.documentElement.style;
+
+// ── Animation state ───────────────────────────────────────────────
+const TC_SPEED   = 5.5;
+let liveCols     = SLOTS.map(([,g]) => parseCol(g(THEMES[0])));
+let tc_from      = liveCols.map(c=>[...c]);
+let tc_to        = liveCols.map(c=>[...c]);
+let tc_t         = 1.0;
+
+let curTheme     = 0;
+let sel_ring_if  = 0.0;              // float ring position, lerps to curTheme
+const tdot_bounce= new Float32Array(N); // per-dot bounce [0..1], decays
+const tdot_hov   = new Float32Array(N); // per-dot hover brightness
+
+let rafId = null, prevTs = null;
+
+// ── Canvas setup ──────────────────────────────────────────────────
+const canvas = document.getElementById('dotCanvas');
+const ctx    = canvas.getContext('2d');
+const DPR    = Math.min(window.devicePixelRatio || 1, 2);
+const DOT_R  = 7;    // r2=7 in draw_titlebar_dots()
+const STEP   = 24;   // TDOT_STEP
+const PAD    = 6;    // vertical padding above/below dot
+
+const EDGE = DOT_R + 2;  // extra padding so ring on first/last dot isn't clipped
+const CW = (N-1)*STEP + DOT_R*2 + EDGE*2;
+const CH = DOT_R*2 + PAD*2;
+canvas.width        = CW * DPR;
+canvas.height       = CH * DPR;
+canvas.style.width  = CW + 'px';
+canvas.style.height = CH + 'px';
+ctx.scale(DPR, DPR);
+const CY = PAD + DOT_R; // dot center y
+
+// ── draw_titlebar_dots — direct port from main.c ──────────────────
+function drawDots() {
+  ctx.clearRect(0, 0, CW, CH);
+
+  // Accent of selected theme (for ring colour)
+  const ac = parseCol(THEMES[curTheme].ac);
+
+  // 1. Selection ring — slides to sel_ring_if position
+  {
+    let ri0 = Math.floor(sel_ring_if);
+    if (ri0 >= N-1) ri0 = N-2;
+    const bnr = tdot_bounce[ri0];
+    const ryo = bnr > 0 ? -Math.sin(bnr * Math.PI) * 5 : 0;
+    const rx  = EDGE + DOT_R + sel_ring_if * STEP;
+    ctx.beginPath();
+    ctx.arc(rx, CY + ryo, DOT_R + 1, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(${ac[0]},${ac[1]},${ac[2]},${220/255})`;
+    ctx.fill();
+  }
+
+  // 2. Each dot
+  for (let i = 0; i < N; i++) {
+    const cx  = EDGE + DOT_R + i * STEP;
+    const bn  = tdot_bounce[i];
+    const hf  = tdot_hov[i];
+    const yoff = bn > 0 ? -Math.sin(bn * Math.PI) * 5 : 0;
+
+    const dc = parseCol(THEMES[i].ac);
+
+    // Hover ring (for non-selected dots)
+    if (hf > 0.02 && i !== curTheme) {
+      ctx.beginPath();
+      ctx.arc(cx, CY + yoff, DOT_R + 1, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(${dc[0]},${dc[1]},${dc[2]},${(hf*90)/255})`;
+      ctx.fill();
+    }
+
+    // Dot body — brightness 0.45 + 0.55*hf (mirrors main.c)
+    const br = 0.45 + 0.55 * hf;
+    ctx.beginPath();
+    ctx.arc(cx, CY + yoff, DOT_R, 0, Math.PI*2);
+    ctx.fillStyle = `rgb(${Math.round(dc[0]*br)},${Math.round(dc[1]*br)},${Math.round(dc[2]*br)})`;
+    ctx.fill();
+
+    // White center dot on selected — frr_aa(cx-2, cy+yoff-2, 4, 4, 2, {255,255,255,180})
+    if (i === curTheme) {
+      ctx.beginPath();
+      ctx.arc(cx, CY + yoff, 2, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(255,255,255,${180/255})`;
+      ctx.fill();
+    }
+  }
+}
+
+// ── Mouse interaction ─────────────────────────────────────────────
+function dotIndexAt(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  for (let i = 0; i < N; i++) {
+    const cx = EDGE + DOT_R + i * STEP;
+    const dx = x - cx, dy = y - CY;
+    if (dx*dx + dy*dy <= (DOT_R+4)*(DOT_R+4)) return i;
+  }
+  return -1;
+}
+
+canvas.addEventListener('mousemove', e => {
+  const hit = dotIndexAt(e.clientX, e.clientY);
+  for (let i = 0; i < N; i++) {
+    // Settle toward 1 if hovered, 0 if not (smooth like main.c tdot_hov)
+    tdot_hov[i] += ((i === hit ? 1 : 0) - tdot_hov[i]) * 0.18;
+  }
+  canvas.style.cursor = hit >= 0 ? 'pointer' : 'default';
+  ensureLoop();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  for (let i = 0; i < N; i++) tdot_hov[i] = 0;
+  ensureLoop();
+});
+
+canvas.addEventListener('click', e => {
+  const hit = dotIndexAt(e.clientX, e.clientY);
+  if (hit >= 0) setTheme(hit);
+});
+
+// ── applySlots — writes liveCols to CSS vars ──────────────────────
+function applySlots(cols) {
+  SLOTS.forEach(([v], i) => cssRoot.setProperty(v, colStr(cols[i])));
+}
+
+// ── rAF loop — runs every frame while anything is animating ───────
+function isSettled() {
+  if (tc_t < 1.0) return false;
+  if (Math.abs(sel_ring_if - curTheme) > 0.001) return false;
+  for (let i = 0; i < N; i++) {
+    if (tdot_bounce[i] > 0.001) return false;
+    if (tdot_hov[i] > 0.001) return false;
+  }
+  return true;
+}
+
+function tick(ts) {
+  const dt = prevTs === null ? 0 : Math.min((ts - prevTs) / 1000, 0.1);
+  prevTs = ts;
+
+  // 1. Colour lerp (tc_t: 0→1 at TC_SPEED)
+  if (tc_t < 1.0) {
+    tc_t = Math.min(tc_t + dt * TC_SPEED, 1.0);
+    for (let i = 0; i < SLOTS.length; i++)
+      liveCols[i] = tc_t >= 1.0 ? [...tc_to[i]] : lerpc(tc_from[i], tc_to[i], tc_t);
+    applySlots(liveCols);
+  }
+
+  // 2. Ring slide — SETTLE(sel_ring_if, curTheme, dt*20) from main.c
+  const ringT = Math.min(dt * 20, 1.0);
+  sel_ring_if += (curTheme - sel_ring_if) * ringT;
+
+  // 3. Bounce decay — dt*5.5 per frame
+  for (let i = 0; i < N; i++) {
+    if (tdot_bounce[i] > 0) {
+      tdot_bounce[i] = Math.max(0, tdot_bounce[i] - dt * 5.5);
+    }
+  }
+
+  // 4. Redraw canvas every frame
+  drawDots();
+
+  if (isSettled()) {
+    rafId = prevTs = null;
+    // Final draw at exact resting state
+    sel_ring_if = curTheme;
+    drawDots();
+    return;
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+function ensureLoop() {
+  if (!rafId) { prevTs = null; rafId = requestAnimationFrame(tick); }
+}
+
+// ── set_theme — mirrors set_theme() in main.c ─────────────────────
+function setTheme(idx) {
+  tc_from  = liveCols.map(c => [...c]);
+  tc_to    = SLOTS.map(([,g]) => parseCol(g(THEMES[idx])));
+  tc_t     = 0.0;
+  tdot_bounce[idx] = 1.0;   // trigger bounce on clicked dot
+  curTheme = idx;
+  ensureLoop();
+  showToast(THEMES[idx].name);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(name) {
+  const toast = document.getElementById('theme-toast');
+  toast.textContent = '⬡  ' + name;
+  toast.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+// ── Boot — set Void instantly ─────────────────────────────────────
+liveCols = SLOTS.map(([,g]) => parseCol(g(THEMES[0])));
+tc_from  = liveCols.map(c=>[...c]);
+tc_to    = [...tc_from];
+applySlots(liveCols);
+drawDots();
+</script>
+
+</body>
