@@ -235,6 +235,15 @@ static float tc_sort_hov[4];
 static float tc_view_hov[2];
 static float sort_ind_f = 0.f;   /* sliding pill – index space */
 static float view_ind_f = 0.f;   /* sliding pill – view mode   */
+/* sort dropdown */
+static int   sort_dd_open  = 0;   /* 1 = dropdown visible              */
+static float sort_dd_anim  = 0.f; /* 0..1 open/close animation         */
+static float sort_btn_hov  = 0.f; /* button hover                      */
+static float sort_item_hov[4];    /* per-item hover                     */
+#define DD_ITEM_H  26
+#define DD_W       90
+#define DD_BTN_H   TC_H
+#define DD_BTN_W   (DD_W)
 static float tab_ix=8.f, tab_itx=8.f;
 static float tb_ch=0.f, tb_mh=0.f, tb_nh=0.f;
 static float srch_spin=0.f;
@@ -978,13 +987,28 @@ static int anim_tick(void){
         float ths2=1.f-powf(0.001f,dt_);
         int mx3,my3; SDL_GetMouseState(&mx3,&my3);
         int hf2=(SDL_GetWindowFlags(win)&SDL_WINDOW_MOUSE_FOCUS)!=0;
+        /* sort button hover */
+        {
+            int in_btn=(hf2&&my3>=TC_Y&&my3<TC_Y+DD_BTN_H&&mx3>=TC_X0&&mx3<TC_X0+DD_BTN_W);
+            SETTLE(sort_btn_hov,(float)in_btn,ths2);
+        }
+        /* sort dropdown item hovers — fast dedicated speed */
+        float dd_item_spd = 1.f-powf(0.000005f, dt_);
         for(int i=0;i<4;i++){
-            int bx=TC_X0+i*(TC_W+TC_GAP);
-            float tg=(hf2&&my3>=0&&my3<TITLE_H&&mx3>=bx&&mx3<bx+TC_W)?1.f:0.f;
-            SETTLE(tc_sort_hov[i],tg,ths2);
+            int item_y=TITLE_H+2+i*DD_ITEM_H;
+            int in_item=(sort_dd_open&&sort_dd_anim>0.05f&&hf2&&
+                         mx3>=TC_X0&&mx3<TC_X0+DD_W&&
+                         my3>=item_y&&my3<item_y+DD_ITEM_H);
+            SETTLE(sort_item_hov[i],(float)in_item,dd_item_spd);
+        }
+        /* dropdown animation — snappy open, quick close */
+        {
+            float dd_tgt = sort_dd_open ? 1.f : 0.f;
+            float dd_spd = 1.f-powf(sort_dd_open ? 0.000002f : 0.00002f, dt_);
+            SETTLE(sort_dd_anim, dd_tgt, dd_spd);
         }
         for(int i=0;i<2;i++){
-            int bx=TC_X0+4*(TC_W+TC_GAP)+TC_GAP+10+i*(VC_W+TC_GAP);
+            int bx=TC_X0+DD_BTN_W+20+i*(VC_W+TC_GAP);
             float tg=(hf2&&my3>=0&&my3<TITLE_H&&mx3>=bx&&mx3<bx+VC_W)?1.f:0.f;
             SETTLE(tc_view_hov[i],tg,ths2);
         }
@@ -1057,7 +1081,7 @@ static int anim_tick(void){
         int mx2,my2; SDL_GetMouseState(&mx2,&my2);
         int py=PG_BAR_Y, ph=PG_H;
         float spd=1.f-powf(0.001f,dt_);
-        int bw=80,bh=34,cy2=py+(ph-TTF_FontHeight(f14)-6)/2;
+        int bw=40,bh=34,cy2=py+ph/2;
         int prev_x=14, next_x_=win_w-14-bw;
         int in_bar=(my2>=py&&my2<py+ph);
         float prev_tgt=(in_bar&&mx2>=prev_x&&mx2<prev_x+bw&&abs(my2-(py+ph/2))<=bh/2&&cur_page>0)?1.f:0.f;
@@ -1518,37 +1542,147 @@ static void draw_srch_spin_fx(void){
    DRAW
    ═══════════════════════════════════════════════════════════════ */
 
-static void draw_tbbtn(TBBtnType type, int cx2, float ht){
-    int cy=TITLE_H/2, s=4;
-    C4 hcol=(type==TB_CLOSE_BTN)?C_CLOSE:MK4(80,80,120,255);
-    if(ht>0.02f){
-        C4 bg=lerpc(MK4(0,0,0,0),hcol,ht*0.80f);
-        frr(cx2-TB_BTN_W/2+4, 3, TB_BTN_W-8, TITLE_H-6, 5, bg);
+/* ── Wu antialiased line — smooth 1.8px stroke ──────────────────────
+   Xiaolin Wu's algorithm: for each step along the major axis, two
+   adjacent pixels are blended with complementary alpha so the line
+   looks smooth at any angle.  No dependencies beyond SDL_RenderDrawPoint.
+   ─────────────────────────────────────────────────────────────────── */
+static void wu_pt(int x,int y,float br,C4 c){
+    Uint8 a=(Uint8)(c.a*br);
+    if(a<2) return;
+    C4 p={c.r,c.g,c.b,a}; sc_(p);
+    SDL_RenderDrawPoint(ren,x,y);
+}
+static void rline(int x0,int y0,int x1,int y1,C4 c){
+    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+    int steep=abs(y1-y0)>abs(x1-x0);
+    if(steep){ int t=x0;x0=y0;y0=t; t=x1;x1=y1;y1=t; }
+    if(x0>x1){ int t=x0;x0=x1;x1=t; t=y0;y0=y1;y1=t; }
+    float dx=(float)(x1-x0), dy=(float)(y1-y0);
+    float grad=(dx==0.f)?1.f:dy/dx;
+    /* start endpoint */
+    float xend=(float)x0, yend=(float)y0+grad*(xend-(float)x0);
+    float xgap=1.f; float xpxl1=(float)x0; float ypxl1=floorf(yend);
+    float frac1=yend-ypxl1;
+    if(steep){ wu_pt((int)ypxl1,(int)xpxl1,xgap*(1.f-frac1),c);
+               wu_pt((int)ypxl1+1,(int)xpxl1,xgap*frac1,c); }
+    else     { wu_pt((int)xpxl1,(int)ypxl1,xgap*(1.f-frac1),c);
+               wu_pt((int)xpxl1,(int)ypxl1+1,xgap*frac1,c); }
+    float intery=yend+grad;
+    /* end endpoint */
+    xend=(float)x1; yend=(float)y1+grad*(xend-(float)x1);
+    float xpxl2=(float)x1;
+    /* main loop */
+    for(int x=(int)xpxl1+1;x<=(int)xpxl2-1;x++){
+        float iy=floorf(intery), fr=intery-iy;
+        if(steep){ wu_pt((int)iy,  x, 1.f-fr, c);
+                   wu_pt((int)iy+1,x, fr,      c); }
+        else     { wu_pt(x,(int)iy,   1.f-fr, c);
+                   wu_pt(x,(int)iy+1, fr,      c); }
+        intery+=grad;
     }
-    C4 ic=lerpc(C_DIM,MK4(210,210,230,255),ht);
-    sc_(ic);
+    /* end cap */
+    frac1=yend-floorf(yend);
+    if(steep){ wu_pt((int)floorf(yend),  (int)xpxl2,xgap*(1.f-frac1),c);
+               wu_pt((int)floorf(yend)+1,(int)xpxl2,xgap*frac1,c); }
+    else     { wu_pt((int)xpxl2,(int)floorf(yend),  xgap*(1.f-frac1),c);
+               wu_pt((int)xpxl2,(int)floorf(yend)+1,xgap*frac1,c); }
+}
+
+static void draw_tbbtn(TBBtnType type, int cx2, float ht){
+    int cy  = TITLE_H / 2;
+    int bw  = TB_BTN_W;   /* full button width  */
+    int bh  = TITLE_H;    /* full button height */
+    int bx  = cx2 - bw/2; /* left edge          */
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+    /* Hover background — full-height rectangle, Windows 11 style */
+    if(ht > 0.005f){
+        C4 bg = (type == TB_CLOSE_BTN)
+            ? MK4(196, 43, 28,  (Uint8)(ht * 240))   /* Win11 red   */
+            : MK4(255, 255, 255,(Uint8)(ht * 38));    /* subtle grey */
+        SDL_Rect r = {bx, 0, bw, bh};
+        sc_(bg); SDL_RenderFillRect(ren, &r);
+    }
+
+    /* Icon — dim white at rest, full white on hover */
+    Uint8 ia = (Uint8)(110 + ht * 145);
+    C4 ic = MK4(255, 255, 255, ia);
+
+    int s = 5;
     switch(type){
     case TB_CLOSE_BTN:
-        SDL_RenderDrawLine(ren,cx2-s,cy-s,cx2+s,cy+s);
-        SDL_RenderDrawLine(ren,cx2+s,cy-s,cx2-s,cy+s);
-        SDL_RenderDrawLine(ren,cx2-s+1,cy-s,cx2+s+1,cy+s);
-        SDL_RenderDrawLine(ren,cx2+s+1,cy-s,cx2-s+1,cy+s);
+        rline(cx2-s, cy-s, cx2+s, cy+s, ic);
+        rline(cx2+s, cy-s, cx2-s, cy+s, ic);
         break;
     case TB_MAX_BTN:
         if(win_maximized){
-            SDL_Rect a2={cx2-s+2,cy-s,s*2-2,s*2-2};
-            SDL_Rect b2={cx2-s,cy-s+2,s*2-2,s*2-2};
-            SDL_RenderDrawRect(ren,&a2); SDL_RenderDrawRect(ren,&b2);
+            /* Restore icon: two offset squares */
+            C4 back = ic; back.a = (Uint8)(ic.a * 0.45f);
+            frr_aa(cx2-s,   cy-s+2, s*2-2, s*2-2, 1, back);
+            frr_aa(cx2-s+2, cy-s,   s*2-2, s*2-2, 1, ic);
         } else {
-            SDL_Rect r2={cx2-s,cy-s,s*2,s*2};
-            SDL_RenderDrawRect(ren,&r2);
+            /* Maximize icon: single square outline */
+            frr_aa(cx2-s, cy-s, s*2, s*2, 1, ic);
         }
         break;
     case TB_MIN_BTN:
-        SDL_RenderDrawLine(ren,cx2-s,cy,  cx2+s,cy);
-        SDL_RenderDrawLine(ren,cx2-s,cy-1,cx2+s,cy-1);
+        rline(cx2-s, cy, cx2+s, cy, ic);
         break;
     }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+}
+
+static void draw_sort_dropdown(void){
+    if(sort_dd_anim < 0.01f) return;
+    static const char *slbl[4]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest"};
+    float a = sort_dd_anim;
+    int total_h = 4*DD_ITEM_H + 4;
+    int visible_h = (int)(total_h * a);
+    if(visible_h < 2) return;
+
+    /* clip to animated height — start from TITLE_H so it overlaps nothing above */
+    SDL_Rect clip = {TC_X0-2, TITLE_H, DD_W+4, visible_h+6};
+    SDL_RenderSetClipRect(ren, &clip);
+
+    /* dropdown background — fully opaque dark panel */
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    C4 dbg = C_TBAR; dbg.a = 255;
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    C4 dbc = C_ACC;  dbc.a = (Uint8)(180*a);
+    bfrr_aa(TC_X0, TITLE_H+1, DD_W, total_h+2, 7, 1, dbc, dbg);
+
+    /* items — sliding pill follows sort_ind_f, same as tab/sort pill */
+    {
+        /* draw the sliding selection pill */
+        float pill_y = TITLE_H+2 + sort_ind_f * DD_ITEM_H;
+        C4 pill = {C_ACC.r, C_ACC.g, C_ACC.b, (Uint8)(180*a)};
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        frr_aa(TC_X0+3, (int)(pill_y+2.5f), DD_W-6, DD_ITEM_H-4, 5, pill);
+    }
+    for(int i=0;i<4;i++){
+        int iy = TITLE_H+2+i*DD_ITEM_H;
+        float hv = sort_item_hov[i];
+        int act = (sort_mode==(SortMode)i);
+        int ty = iy+(DD_ITEM_H-TTF_FontHeight(f14))/2;
+
+        /* hover highlight on non-active items */
+        if(!act && hv > 0.01f){
+            C4 hi = {255,255,255,(Uint8)(hv*30*a)};
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            frr_aa(TC_X0+3, iy+2, DD_W-6, DD_ITEM_H-4, 5, hi);
+        }
+
+        C4 lc = act ? MK4(255,255,255,(Uint8)(255*a))
+                    : lerpc(C_DIM, C_TXT, hv*0.7f);
+        if(!act) lc.a = (Uint8)(lc.a * a);
+
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        rtx(f14, slbl[i], TC_X0+8, ty, lc);
+    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    SDL_RenderSetClipRect(ren, NULL);
 }
 
 static void draw_titlebar_dots(void);
@@ -1564,26 +1698,40 @@ static void draw_titlebar(void){
 
     static const char *slbl[4]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest"};
 
-    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+    /* ── Sort dropdown button ── */
     {
-        float px = TC_X0 + sort_ind_f*(float)(TC_W+TC_GAP);
-        C4 pill = {C_ACC.r,C_ACC.g,C_ACC.b,200};
-        frr_aa((int)(px+0.5f), TC_Y, TC_W, TC_H, 5, pill);
-    }
-    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
-    for(int i=0;i<4;i++){
-        int bx=TC_X0+i*(TC_W+TC_GAP);
-        float hv=tc_sort_hov[i];
-        int act=(sort_mode==(SortMode)i);
-        C4 lc = act ? C_TXT : lerpc(C_DIM, C_SUB, hv);
-        rtxcen(f14,slbl[i],bx,TC_Y,TC_W,TC_H,lc);
+        /* When dropdown is open, keep button fully "active" regardless of hover */
+        float hv = sort_dd_open ? 1.f : sort_btn_hov;
+        /* button background */
+        C4 bg = lerpc(C_SRCH, C_SRCHA, hv*0.5f); bg.a=255;
+        C4 bc = lerpc(C_SEP, C_ACC, hv*0.7f);
+        bfrr_aa(TC_X0, TC_Y, DD_BTN_W, DD_BTN_H, 5, 1, bc, bg);
+        /* label = current sort mode */
+        C4 lc = C_TXT; lc.a = (Uint8)(150 + hv*105);
+        int lw2 = txw_(f14, slbl[sort_mode]);
+        /* chevron down — 5px wide */
+        int chev_x = TC_X0+DD_BTN_W-14;
+        int chev_y = TC_Y+DD_BTN_H/2;
+        float rot  = sort_dd_anim; /* 0=down, 1=up */
+        rtx(f14, slbl[sort_mode], TC_X0+8, TC_Y+(DD_BTN_H-TTF_FontHeight(f14))/2, lc);
+        /* animated chevron: rotates 180° when open */
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        C4 chev_c = lerpc(C_DIM, C_TXT, hv);
+        int cy2_chev = chev_y + (int)((1.f-rot)*2.f - 1.f); /* slight vertical shift */
+        int arm = 3;
+        /* top-half of chevron (pointing down when closed, up when open) */
+        float flip = 1.f - 2.f*rot; /* +1 down, -1 up */
+        rline(chev_x-arm, cy2_chev-(int)(flip*arm/2),
+              chev_x,      cy2_chev+(int)(flip*arm/2), chev_c);
+        rline(chev_x+arm, cy2_chev-(int)(flip*arm/2),
+              chev_x,      cy2_chev+(int)(flip*arm/2), chev_c);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
     }
 
+    /* separator between sort button and view toggle */
     {
-        int sort_end = TC_X0 + 3*(TC_W+TC_GAP) + TC_W;
-        int vx0_tmp  = TC_X0 + 4*(TC_W+TC_GAP) + TC_GAP + 10;
-        int sx = (sort_end + vx0_tmp) / 2;
-        C4 sc2=C_DIM; sc2.a=80; sc_(sc2);
+        int sx = TC_X0 + DD_BTN_W + 8;
+        C4 sc2=C_DIM; sc2.a=80;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
         sc_(sc2);
         SDL_RenderDrawLine(ren,sx,TC_Y+2,sx,TC_Y+TC_H-2);
@@ -1592,14 +1740,14 @@ static void draw_titlebar(void){
 
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
     {
-        int vx0=TC_X0+4*(TC_W+TC_GAP)+TC_GAP+10;
+        int vx0=TC_X0+DD_BTN_W+20;
         float px2 = vx0 + view_ind_f*(float)(VC_W+TC_GAP);
         C4 vpill = {C_ACC.r,C_ACC.g,C_ACC.b,200};
         frr_aa((int)(px2+0.5f), TC_Y, VC_W, TC_H, 5, vpill);
     }
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
     {
-        int vx0=TC_X0+4*(TC_W+TC_GAP)+TC_GAP+10;
+        int vx0=TC_X0+DD_BTN_W+20;
         for(int i=0;i<2;i++){
             int bx=vx0+i*(VC_W+TC_GAP);
             int act=(view_mode==(ViewMode)i);
@@ -1710,7 +1858,7 @@ static void draw_hdr(void){
             {
                 int lw2=txw_(f12,"THEME");
                 rtx(f12,"THEME", bx0+(dot_block-lw2)/2,
-                    dots_cy-TDOT_R-4-fh12, C_DIM);
+                    dots_cy-TDOT_R-4-fh12, C_TXT);
             }
 
             SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
@@ -1744,7 +1892,7 @@ static void draw_hdr(void){
             {
                 const char *nm=THEMES[cur_theme].name;
                 int nw=txw_(f12,nm);
-                rtx(f12,nm, bx0+(dot_block-nw)/2, dots_cy+TDOT_R+4, C_SUB);
+                rtx(f12,nm, bx0+(dot_block-nw)/2, dots_cy+TDOT_R+4, C_TXT);
             }
         }
     }
@@ -1977,22 +2125,15 @@ static void draw_grid_card(int ri, int x, int y){
 }
 
 /* ── Page bar ────────────────────────────────────────────────────── */
-/* draw a filled left or right arrow triangle at (cx,cy) size ~sz */
+/* Smooth chevron using Wu lines — open V shape, tip centred */
 static void draw_arrow(int cx, int cy, int sz, int right, C4 col){
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    sc_(col);
-    /* scanline fill */
-    for(int dy=-sz; dy<=sz; dy++){
-        float t=1.f-(float)abs(dy)/(float)(sz+1);
-        int hw=(int)(t*(float)sz+0.5f);
-        int x0,x1;
-        if(right){ x0=cx-hw; x1=cx+hw; }
-        else      { x0=cx-hw; x1=cx+hw; }
-        /* for right-pointing: wide at left, narrow at right */
-        if(right){ x0=cx-sz; x1=cx-sz+hw*2; }
-        else      { x0=cx+sz-hw*2; x1=cx+sz; }
-        SDL_RenderDrawLine(ren, x0, cy+dy, x1, cy+dy);
-    }
+    /* Slightly open chevron: tip offset 40%, arms extend back */
+    int arm = (int)(sz * 1.1f);
+    int tip_x = right ? cx + sz*2/3 : cx - sz*2/3;
+    int back_x = right ? cx - arm/2  : cx + arm/2;
+    rline(back_x, cy - arm, tip_x, cy, col);
+    rline(back_x, cy + arm, tip_x, cy, col);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
@@ -2012,7 +2153,7 @@ static void draw_page_bar(void){
     int cy=py+ph/2;
 
     /* ── Prev / Next buttons ── */
-    int bw=80, bh=34, br=10;
+    int bw=40, bh=34, br=8;
     int prev_x=14, next_x=win_w-14-bw;
     int prev_active=(cur_page>0);
     int next_active=(cur_page<tp-1);
@@ -2032,56 +2173,14 @@ static void draw_page_bar(void){
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); \
     } while(0)
 
-    /* prev button */
-    {
-        float hv=pg_prev_hov;
-        /* outer accent glow on hover */
-        if(prev_active && hv>0.02f){
-            C4 glow={C_ACC.r,C_ACC.g,C_ACC.b,(Uint8)(hv*60)};
-            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-            frr_aa(prev_x-3,cy-bh/2-3,bw+6,bh+6,br+3,glow);
-            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
-        }
-        /* border: 1px idle, 2px on hover, lights up with accent */
-        int bt=prev_active?(hv>0.5f?2:1):1;
-        C4 bc=prev_active?lerpc(C_SEP,C_ACC,hv*0.9f):C_SEP;
-        C4 ic=prev_active?lerpc(C_SRCH,C_SRCHA,hv*0.55f):C_BTNI;
-        ic.a=255;
-        bfrr_aa(prev_x,cy-bh/2,bw,bh,br,bt,bc,ic);
-        /* arrow + label */
-        C4 lc=prev_active?lerpc(C_SUB,C_TXT,hv):C_DIM;
-        C4 ac2=prev_active?lerpc(C_SUB,C_ACC,hv):C_DIM;
-        int fh14=TTF_FontHeight(f14);
-        int lw2=txw_(f14,"Prev");
-        int content_w=12+6+lw2;  /* arrow(12) + gap(6) + text */
-        int cx2=prev_x+(bw-content_w)/2;
-        /* draw bigger chevron */
-        draw_arrow(cx2+5,cy,5,0,ac2);
-        rtx(f14,"Prev",cx2+12+6,cy-fh14/2,lc);
-    }
-    /* next button */
-    {
-        float hv=pg_next_hov;
-        if(next_active && hv>0.02f){
-            C4 glow={C_ACC.r,C_ACC.g,C_ACC.b,(Uint8)(hv*60)};
-            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-            frr_aa(next_x-3,cy-bh/2-3,bw+6,bh+6,br+3,glow);
-            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
-        }
-        int bt=next_active?(hv>0.5f?2:1):1;
-        C4 bc=next_active?lerpc(C_SEP,C_ACC,hv*0.9f):C_SEP;
-        C4 ic=next_active?lerpc(C_SRCH,C_SRCHA,hv*0.55f):C_BTNI;
-        ic.a=255;
-        bfrr_aa(next_x,cy-bh/2,bw,bh,br,bt,bc,ic);
-        C4 lc=next_active?lerpc(C_SUB,C_TXT,hv):C_DIM;
-        C4 ac2=next_active?lerpc(C_SUB,C_ACC,hv):C_DIM;
-        int fh14=TTF_FontHeight(f14);
-        int lw2=txw_(f14,"Next");
-        int content_w=lw2+6+12;
-        int cx2=next_x+(bw-content_w)/2;
-        rtx(f14,"Next",cx2,cy-fh14/2,lc);
-        draw_arrow(cx2+lw2+6+5,cy,5,1,ac2);
-    }
+    /* prev / next — icon-only square buttons */
+    prev_x=14; next_x=win_w-14-bw;
+
+    #define DRAW_NAV_BTN(bx2,active2,hov2,dir2) do {         float _hv=(hov2);         C4 _bc=(active2)?lerpc(C_SEP,C_ACC,_hv*0.9f):C_SEP;         C4 _ic=(active2)?lerpc(C_SRCH,C_SRCHA,_hv*0.4f):C_BTNI; _ic.a=255;         bfrr_aa(bx2,cy-bh/2,bw,bh,br,1,_bc,_ic);         C4 _ac=(active2)?lerpc(C_SUB,C_ACC,_hv):C_DIM;         draw_arrow((bx2)+bw/2,cy,4,(dir2),_ac);     } while(0)
+
+    DRAW_NAV_BTN(prev_x, prev_active, pg_prev_hov, 0);
+    DRAW_NAV_BTN(next_x, next_active, pg_next_hov, 1);
+    #undef DRAW_NAV_BTN
     #undef DRAW_CHEVRON
 
     /* ── Page counter centered between the buttons ── */
@@ -2360,6 +2459,8 @@ int main(int argc,char **argv){
 
     /* Snap pill indicators to loaded state */
     sort_ind_f=(float)sort_mode;
+    sort_dd_open=0; sort_dd_anim=0.f; sort_btn_hov=0.f;
+    memset(sort_item_hov,0,sizeof(sort_item_hov));
     view_ind_f=(float)view_mode;
 
     memset(tdot_hov,0,sizeof(tdot_hov));
@@ -2424,22 +2525,31 @@ int main(int argc,char **argv){
                 if(ev.button.button==SDL_BUTTON_LEFT){
                     int mx=ev.button.x, my=ev.button.y;
 
+                        /* sort dropdown item click — items live BELOW the title bar */
+                        if(sort_dd_open&&sort_dd_anim>0.1f){
+                            for(int i=0;i<4;i++){
+                                int item_y=TITLE_H+2+i*DD_ITEM_H;
+                                if(mx>=TC_X0&&mx<TC_X0+DD_W&&my>=item_y&&my<item_y+DD_ITEM_H){
+                                    if(sort_mode!=(SortMode)i){ sort_mode=(SortMode)i; sfx_sort(); rebuild(); save_d(); }
+                                    break;
+                                }
+                            }
+                        }
+
                         if(my<TITLE_H){
                             if(IN_BTN(mx,TB_CX)){ sfx_click(); run=0; break; }
                             if(IN_BTN(mx,TB_MX)){ sfx_click(); toggle_maximize(); break; }
                             if(IN_BTN(mx,TB_NX)){ sfx_click(); SDL_MinimizeWindow(win); break; }
                             int hit_tb_btn=0;
+                            /* sort dropdown button toggle */
+                            if(my>=TC_Y&&my<TC_Y+DD_BTN_H&&mx>=TC_X0&&mx<TC_X0+DD_BTN_W){
+                                hit_tb_btn=1;
+                                sort_dd_open=!sort_dd_open;
+                                sfx_click();
+                            }
                             if(my>=TC_Y&&my<TC_Y+TC_H){
-                                for(int i=0;i<4;i++){
-                                    int bx=TC_X0+i*(TC_W+TC_GAP);
-                                    if(mx>=bx&&mx<bx+TC_W){
-                                        hit_tb_btn=1;
-                                        if(sort_mode!=(SortMode)i){ sort_mode=(SortMode)i; sfx_sort(); rebuild(); save_d(); }
-                                        break;
-                                    }
-                                }
                                 for(int i=0;i<2;i++){
-                                    int bx=TC_X0+4*(TC_W+TC_GAP)+TC_GAP+10+i*(VC_W+TC_GAP);
+                                    int bx=TC_X0+DD_BTN_W+20+i*(VC_W+TC_GAP);
                                     if(mx>=bx&&mx<bx+VC_W){
                                         hit_tb_btn=1;
                                         if(view_mode!=(ViewMode)i){
@@ -2519,7 +2629,7 @@ int main(int argc,char **argv){
 
                     /* page bar clicks */
                     if(my>=PG_BAR_Y&&my<PG_BAR_Y+PG_H){
-                        int py=PG_BAR_Y,ph=PG_H,bw=80,bh=34;
+                        int py=PG_BAR_Y,ph=PG_H,bw=40,bh=34;
                         int prev_x2=14, next_x2=win_w-14-bw;
                         int cy2=py+ph/2;
                         if(mx>=prev_x2&&mx<prev_x2+bw&&abs(my-cy2)<=bh/2){ int p=cur_page; go_page(cur_page-1); if(cur_page!=p) sfx_tab(); }
@@ -2766,6 +2876,7 @@ int main(int argc,char **argv){
             draw_tabs();
             draw_list();
             draw_sbar();
+            draw_sort_dropdown();  /* drawn last — always on top of tabs/content */
             SDL_RenderPresent(ren);
         }
     }
