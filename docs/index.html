@@ -773,6 +773,100 @@
   .license-type { font-family: var(--mono); font-size: 11px; color: var(--played); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 24px; display: block; }
   .license-text { font-size: 13px; line-height: 1.9; color: var(--muted); display: flex; flex-direction: column; gap: 14px; }
   .license-text strong { color: var(--text); font-weight: 500; }
+  /* ── SMARTSCREEN SECTION ── */
+  .smartscreen-box {
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--wish) 25%, transparent);
+    border-radius: 6px;
+    padding: 40px 48px;
+    max-width: 800px;
+    position: relative;
+    overflow: hidden;
+  }
+  .smartscreen-box::before {
+    content: '⚠';
+    position: absolute;
+    right: 36px; top: 12px;
+    font-size: 90px;
+    color: color-mix(in srgb, var(--wish) 8%, transparent);
+    line-height: 1;
+    pointer-events: none;
+    font-style: normal;
+  }
+  .smartscreen-box h3 {
+    font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif;
+    font-size: 24px; letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .ss-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--wish);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    display: block;
+  }
+  .ss-body {
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .ss-body p { margin: 0; }
+  .ss-body strong { color: var(--text); font-weight: 500; }
+  .ss-body a { color: var(--accent); text-decoration: none; }
+  .ss-body a:hover { text-decoration: underline; }
+  .ss-steps-group { display: flex; flex-direction: column; gap: 20px; }
+  .ss-step-block { display: flex; flex-direction: column; gap: 8px; }
+  .ss-step-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--wish);
+    opacity: 0.75;
+    margin-bottom: 2px;
+  }
+  .ss-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ss-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .ss-step-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--wish);
+    background: color-mix(in srgb, var(--wish) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--wish) 25%, transparent);
+    border-radius: 100px;
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .ss-code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: color-mix(in srgb, var(--border) 80%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
   /* ── FOOTER ── */
   footer {
     position: relative; z-index: 1;
@@ -828,6 +922,7 @@
     <a href="#features">Features</a>
     <a href="#statuses">Statuses</a>
     <a href="#download">Download</a>
+    <a href="#smartscreen">Security</a>
     <a href="#license">License</a>
   </div>
 </nav>
@@ -1132,6 +1227,70 @@
   </div>
 </section>
 
+
+<!-- SMARTSCREEN -->
+<section class="section" id="smartscreen">
+  <p class="section-label">Windows Warning</p>
+  <h2 class="section-title">IS IT<br><em>SAFE?</em></h2>
+  <div class="smartscreen-box">
+    <h3>Windows SmartScreen Warning</h3>
+    <span class="ss-label">Yes — here's why it happens</span>
+    <div class="ss-body">
+      <p>
+        When you download or run Game Catalogue, Windows may show a popup saying
+        <strong>"Windows protected your PC"</strong> or Edge may flag the download as potentially unsafe.
+        This is <strong>expected and completely normal</strong> for independent open-source apps.
+      </p>
+      <p>
+        SmartScreen flags any executable that lacks a paid code-signing certificate or hasn't
+        built up enough download history. Game Catalogue has neither — it's a free, indie project.
+        This warning does <strong>not</strong> mean the app is harmful.
+        The full source code is publicly available on
+        <a href="https://github.com/miguelarantunes-hue/GameCatalogue" target="_blank" rel="noopener">GitHub</a>
+        for anyone to audit.
+      </p>
+
+      <div class="ss-steps-group">
+        <div class="ss-step-block">
+          <span class="ss-step-label">Edge download prompt</span>
+          <div class="ss-steps">
+            <div class="ss-step">
+              <span class="ss-step-num">1</span>
+              <span>Click the <span class="ss-code">···</span> (three dots) next to the download in Edge's toolbar</span>
+            </div>
+            <div class="ss-step">
+              <span class="ss-step-num">2</span>
+              <span>Select <strong>Keep</strong></span>
+            </div>
+            <div class="ss-step">
+              <span class="ss-step-num">3</span>
+              <span>Click <strong>Show more</strong>, then <strong>Keep anyway</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ss-step-block">
+          <span class="ss-step-label">SmartScreen popup when running the installer</span>
+          <div class="ss-steps">
+            <div class="ss-step">
+              <span class="ss-step-num">1</span>
+              <span>Click <strong>More info</strong> on the blue SmartScreen popup</span>
+            </div>
+            <div class="ss-step">
+              <span class="ss-step-num">2</span>
+              <span>Click <strong>Run anyway</strong></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p>
+        Prefer to verify for yourself? Clone the repo and run <span class="ss-code">build.bat</span> —
+        everything needed to compile the app from source is included.
+      </p>
+    </div>
+  </div>
+</section>
 
 <!-- LICENSE -->
 <section class="section" id="license">
