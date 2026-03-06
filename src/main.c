@@ -80,7 +80,12 @@ int win_h = 860;
 
 /* ── Columns ──────────────────────────────────────────────────── */
 #define YR_W     50
-#define YR_X_   (BTN_LX_ - 14 - YR_W)
+#define NOTE_BTN_SZ  BTN_SZ                              /* same size as status buttons      */
+#define NOTE_BTN_GAP 14                                  /* gap between note btn and status  */
+#define NOTE_BTN_X_  (BTN_LX_ - NOTE_BTN_SZ - NOTE_BTN_GAP) /* left of status buttons      */
+#define RAT_W    40                       /* star rating column              */
+#define RAT_X_  (NOTE_BTN_X_ - RAT_W - 10)  /* left of note button          */
+#define YR_X_   (RAT_X_ - 12 - YR_W)
 #define NM_X     16
 #define NM_MW_  (YR_X_ - NM_X - 8)
 
@@ -104,7 +109,7 @@ int win_h = 860;
 /* ── Misc ─────────────────────────────────────────────────────── */
 #define MAX_G    2500
 #define SAVEFILE_NAME "catalogue_save.bin"
-#define SAVE_VER 0xCA7A2028u
+#define SAVE_VER 0xCA7A2029u
 
 static char save_path[512] = {0};
 
@@ -148,11 +153,13 @@ typedef struct {
     char st[N_STATUS];
     char name_lc[128]; /* pre-computed lowercase for fast search */
     char genre_lc[32]; /* pre-computed lowercase for fast search */
+    int  rating;       /* 0 = unrated, 1–10                      */
+    char notes[512];   /* personal notes / review                 */
 } Game;
 
 typedef enum {
     T_ALL=0,T_WISH,T_PLAYED,T_PLAYING,
-    T_FINISHED,T_DROPPED,T_FAV,T_ROTATION
+    T_FINISHED,T_DROPPED,T_FAV,T_ROTATION,T_STATS
 } TabId;
 
 typedef enum { RZ_NONE=0,RZ_N,RZ_NE,RZ_E,RZ_SE,RZ_S,RZ_SW,RZ_W,RZ_NW } RzDir;
@@ -183,6 +190,7 @@ static Game  db[MAX_G];
 static int   ndb=0, flt[MAX_G], nflt=0;
 static int   flt_score[MAX_G];
 static TabId cur_tab=T_ALL;
+static TabId prev_tab=T_ALL; /* tab to return to when closing stats */
 static char  srch[128]="";
 static int   s_on=0, hov_db=-1;
 /* ── Search edit state ──────────────────────────────────────────── */
@@ -208,21 +216,28 @@ static float page_slide=0.f;      /* animated page indicator   */
 static float pg_prev_hov=0.f;     /* prev button hover         */
 static float pg_next_hov=0.f;     /* next button hover         */
 static float pg_num_hov[64];      /* per-dot hover             */
-typedef enum { SORT_AZ=0, SORT_ZA, SORT_NEW, SORT_OLD } SortMode;
+typedef enum { SORT_AZ=0, SORT_ZA, SORT_NEW, SORT_OLD, SORT_RATING } SortMode;
 typedef enum { VIEW_LIST=0, VIEW_GRID } ViewMode;
 static SortMode sort_mode = SORT_AZ;
 static ViewMode view_mode = VIEW_LIST;
 static float tc_sort_hov[4];
 static float tc_view_hov[2];
+static float tc_stats_hov = 0.f;  /* stats button hover */
 static float sort_ind_f = 0.f;   /* sliding pill – index space */
 static float view_ind_f = 0.f;   /* sliding pill – view mode   */
+/* ── Notes overlay ──────────────────────────────────────────────── */
+static int   note_open = -1;   /* db[] index of open note, -1=closed */
+static float note_anim = 0.f;  /* 0..1 fade in/out                   */
+static int   note_cur  = 0;    /* cursor position in notes string     */
+static int   note_sel0 = 0;    /* selection anchor (like srch_sel0)   */
+static int   note_drag = 0;    /* 1 while drag-selecting inside notes */
 /* sort dropdown */
 static int   sort_dd_open  = 0;   /* 1 = dropdown visible              */
 static float sort_dd_anim  = 0.f; /* 0..1 open/close animation         */
 static float sort_btn_hov  = 0.f; /* button hover                      */
-static float sort_item_hov[4];    /* per-item hover                     */
+static float sort_item_hov[5];    /* per-item hover                     */
 #define DD_ITEM_H  26
-#define DD_W       90
+#define DD_W       100
 #define DD_BTN_H   TC_H
 #define DD_BTN_W   (DD_W)
 static float tab_ix=8.f, tab_itx=8.f;
@@ -291,6 +306,8 @@ static void rebuild(void);
 static int  grid_cols(void);
 static int  row_at(int mx,int my);
 static int  btn_at(int mx,int my,int ri);
+static void draw_note_overlay(void);
+static void draw_stats(void);
 
 /* ═══════════════════════ Draw helpers ══════════════════════════ */
 void sc_(C4 c){ SDL_SetRenderDrawColor(ren,c.r,c.g,c.b,c.a); }
@@ -553,7 +570,7 @@ static void do_rz_move(void){
     SDL_SetWindowPosition(win,nx,ny);
     SDL_SetWindowSize(win,nw,nh);
     win_w=nw; win_h=nh;
-    tab_ix = tab_itx = (float)TAB_X_((int)cur_tab);
+    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);}
     apply_rgn(win_w,win_h,1);
 }
 
@@ -577,7 +594,7 @@ static void toggle_maximize(void){
         win_maximized=1;
         apply_rgn(win_w,win_h,0);
     }
-    tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);
+    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);}
     rebuild();
 }
 
@@ -608,27 +625,37 @@ static int anim_tick(void){
     /* ── Scroll ── */
     { float sp=1.f-powf(0.00004f,dt_); SETTLE(scr_f,scr_tgt,sp); }
 
-    /* ── Grid hover detection ── */
-    if(view_mode==VIEW_GRID){
-        int mx4,my4; SDL_GetMouseState(&mx4,&my4);
+    /* ── Grid/List hover detection (polled every tick) ── */
+    if(note_open>=0){
         hov_db=-1;
-        if(my4>=LST_Y&&my4<LST_Y+LST_H_&&mx4>=0&&mx4<LIST_W_){
-            int cols=grid_cols();
-            int block_w=cols*(GRID_W+GRID_GAP)-GRID_GAP;
-            int ox=(LIST_W_-block_w)/2;
-            int pg_cnt2=page_last()-page_first()+1;
-            int rows_pg=(pg_cnt2+cols-1)/cols; if(rows_pg<1) rows_pg=1;
-            int used_h2=rows_pg*(GRID_H+GRID_GAP)-GRID_GAP;
-            int oy2=LST_Y+(LST_H_-used_h2)/2; if(oy2<LST_Y) oy2=LST_Y;
-            int row2=(my4-oy2)/(GRID_H+GRID_GAP);
-            int col2=(mx4-ox)/(GRID_W+GRID_GAP);
-            if(col2>=0&&col2<cols&&row2>=0){
-                int local=row2*cols+col2;
-                int ri=page_first()+local;
-                int cy2=oy2+row2*(GRID_H+GRID_GAP);
-                int cx2=ox+col2*(GRID_W+GRID_GAP);
-                if(mx4>=cx2&&mx4<cx2+GRID_W&&my4>=cy2&&my4<cy2+GRID_H&&ri<=page_last()&&ri<nflt)
-                    hov_db=flt[ri];
+    } else {
+        int mx4,my4; SDL_GetMouseState(&mx4,&my4);
+        int dd_over=(sort_dd_open||sort_dd_anim>0.05f)&&mx4>=TC_X0&&mx4<TC_X0+DD_W&&my4>=TITLE_H&&my4<TITLE_H+5*DD_ITEM_H+8;
+        hov_db=-1;
+        if(!dd_over){
+            if(view_mode==VIEW_GRID){
+                if(my4>=LST_Y&&my4<LST_Y+LST_H_&&mx4>=0&&mx4<LIST_W_){
+                    int cols=grid_cols();
+                    int block_w=cols*(GRID_W+GRID_GAP)-GRID_GAP;
+                    int ox=(LIST_W_-block_w)/2;
+                    int pg_cnt2=page_last()-page_first()+1;
+                    int rows_pg=(pg_cnt2+cols-1)/cols; if(rows_pg<1) rows_pg=1;
+                    int used_h2=rows_pg*(GRID_H+GRID_GAP)-GRID_GAP;
+                    int oy2=LST_Y+(LST_H_-used_h2)/2; if(oy2<LST_Y) oy2=LST_Y;
+                    int row2=(my4-oy2)/(GRID_H+GRID_GAP);
+                    int col2=(mx4-ox)/(GRID_W+GRID_GAP);
+                    if(col2>=0&&col2<cols&&row2>=0){
+                        int local=row2*cols+col2;
+                        int ri=page_first()+local;
+                        int cy2=oy2+row2*(GRID_H+GRID_GAP);
+                        int cx2=ox+col2*(GRID_W+GRID_GAP);
+                        if(mx4>=cx2&&mx4<cx2+GRID_W&&my4>=cy2&&my4<cy2+GRID_H&&ri<=page_last()&&ri<nflt)
+                            hov_db=flt[ri];
+                    }
+                }
+            } else {
+                int r4=row_at(mx4,my4);
+                if(r4>=0) hov_db=flt[r4];
             }
         }
     }
@@ -638,17 +665,21 @@ static int anim_tick(void){
         float hs=clampf(dt_*40.f,0.f,1.f);
         int first = page_first();
         int last  = page_last();
-
-        /* decay any entry that went off-screen but still has hover */
-        if(hov_db>=0 && (hov_db<first||hov_db>last)){
-            if(row_ht[hov_db]>0.0015f){ row_ht[hov_db]-=hs; busy=1; }
-            else row_ht[hov_db]=0.f;
-        }
+        /* animate all visible entries toward their target */
         for(int ri=first;ri<=last;ri++){
             int i=flt[ri];
             float tg=(i==hov_db)?1.f:0.f;
             if(fabsf(row_ht[i]-tg)<0.0015f){ row_ht[i]=tg; }
             else { row_ht[i]+=(tg-row_ht[i])*hs; busy=1; }
+        }
+        /* decay previously-hovered entry if it's off the current page */
+        if(hov_db>=0){
+            int found=0;
+            for(int ri=first;ri<=last;ri++) if(flt[ri]==hov_db){found=1;break;}
+            if(!found){
+                if(row_ht[hov_db]>0.0015f){ row_ht[hov_db]-=hs; busy=1; }
+                else row_ht[hov_db]=0.f;
+            }
         }
     }
 
@@ -667,7 +698,7 @@ static int anim_tick(void){
     /* ── Tab pill ── */
     {
         float slide=clampf(dt_*30.f,0.f,1.f);
-        tab_itx=(float)TAB_X_((int)cur_tab);
+        if(cur_tab<N_TABS) tab_itx=(float)TAB_X_((int)cur_tab);
         if(rz_drag||win_drag){ tab_ix=tab_itx; }
         else { SETTLE(tab_ix,tab_itx,slide); }
         SETTLE(sort_ind_f,(float)sort_mode,slide);
@@ -722,7 +753,7 @@ static int anim_tick(void){
         }
         /* sort dropdown item hovers — fast dedicated speed */
         float dd_item_spd = 1.f-powf(0.000005f, dt_);
-        for(int i=0;i<4;i++){
+        for(int i=0;i<5;i++){
             int item_y=TITLE_H+4+i*DD_ITEM_H;
             int in_item=(sort_dd_open&&sort_dd_anim>0.05f&&hf2&&
                          mx3>=TC_X0&&mx3<TC_X0+DD_W&&
@@ -740,10 +771,20 @@ static int anim_tick(void){
             float tg=(hf2&&my3>=0&&my3<TITLE_H&&mx3>=bx&&mx3<bx+VC_W)?1.f:0.f;
             SETTLE(tc_view_hov[i],tg,ths2);
         }
+        {
+            int sbx_s=TC_X0+DD_BTN_W+20+2*(VC_W+TC_GAP)-TC_GAP+TC_GAP+4;
+            float tg=(hf2&&my3>=0&&my3<TITLE_H&&mx3>=sbx_s&&mx3<sbx_s+VC_W)?1.f:0.f;
+            SETTLE(tc_stats_hov,tg,ths2);
+        }
 
         /* ── Button hover (skip entries already at target) ── */
         float bspd=1.f-powf(0.00015f,dt_);
         int hov_gi=-1,hov_bj=-1;
+        /* suppress row/button hover when sort dropdown covers this area */
+        int dd_blocks_hover = (sort_dd_open||sort_dd_anim>0.05f)
+                              && hf2 && mx2>=TC_X0 && mx2<TC_X0+DD_W
+                              && my2>=TITLE_H && my2<TITLE_H+5*DD_ITEM_H+8;
+        if(!dd_blocks_hover){
         if(view_mode==VIEW_LIST){
             int hov_ri2=row_at(mx2,my2);
             if(hov_ri2>=0&&hov_ri2<nflt){
@@ -802,7 +843,8 @@ static int anim_tick(void){
                 }
             }
         }
-    }
+        } /* end !dd_blocks_hover */
+    } /* end theme/hover block */
 
     /* ── Page bar hover ── */
     {
@@ -853,6 +895,12 @@ static int anim_tick(void){
     /* ── Cursor blink (always busy when search focused) ── */
     if(s_on){ srch_blink+=dt_*1.8f; if(srch_blink>=2.f) srch_blink-=2.f; busy=1; }
     else srch_blink=0.f;
+    /* ── Note overlay blink / fade ── */
+    if(note_open>=0) busy=1;
+    { float tgt=(note_open>=0)?1.f:0.f;
+      float spd=1.f-powf(0.00002f,dt_);
+      float d=tgt-note_anim;
+      if(fabsf(d)<0.0015f) note_anim=tgt; else { note_anim+=d*spd; busy=1; } }
 
     /* ── Search spin ── */
     {
@@ -1106,8 +1154,17 @@ static int cmp_flt_az (const void *a,const void *b){ return strcasecmp(db[*(int*
 static int cmp_flt_za (const void *a,const void *b){ return strcasecmp(db[*(int*)b].name,db[*(int*)a].name); }
 static int cmp_flt_new(const void *a,const void *b){ return db[*(int*)b].year - db[*(int*)a].year; }
 static int cmp_flt_old(const void *a,const void *b){ return db[*(int*)a].year - db[*(int*)b].year; }
+static int cmp_flt_rating(const void *a,const void *b){
+    /* highest rating first; unrated sink to bottom; ties A-Z */
+    int ra=db[*(int*)a].rating, rb=db[*(int*)b].rating;
+    /* treat 0 (unrated) as -1 so it sinks below rated entries */
+    int sa=ra?ra:-1, sb=rb?rb:-1;
+    if(sb!=sa) return sb-sa;
+    return strcasecmp(db[*(int*)a].name,db[*(int*)b].name);
+}
 
 static void rebuild(void){
+    if(cur_tab==T_STATS){ nflt=0; return; }
     nflt=0;
     char ql[128]; int qlen=(int)strlen(srch);
     strlower(srch,ql,128);
@@ -1137,10 +1194,11 @@ static void rebuild(void){
         }
     } else {
         switch(sort_mode){
-        case SORT_AZ:  qsort(flt,nflt,sizeof(int),cmp_flt_az);  break;
-        case SORT_ZA:  qsort(flt,nflt,sizeof(int),cmp_flt_za);  break;
-        case SORT_NEW: qsort(flt,nflt,sizeof(int),cmp_flt_new); break;
-        case SORT_OLD: qsort(flt,nflt,sizeof(int),cmp_flt_old); break;
+        case SORT_AZ:     qsort(flt,nflt,sizeof(int),cmp_flt_az);     break;
+        case SORT_ZA:     qsort(flt,nflt,sizeof(int),cmp_flt_za);     break;
+        case SORT_NEW:    qsort(flt,nflt,sizeof(int),cmp_flt_new);    break;
+        case SORT_OLD:    qsort(flt,nflt,sizeof(int),cmp_flt_old);    break;
+        case SORT_RATING: qsort(flt,nflt,sizeof(int),cmp_flt_rating); break;
         }
     }
     scr_f=0.f; scr_tgt=0.f;
@@ -1157,6 +1215,9 @@ static void save_d(void){
     fwrite(&cur_theme,sizeof(int),1,fp);
     fwrite(&sort_mode,sizeof(int),1,fp);
     fwrite(&view_mode,sizeof(int),1,fp);
+    /* v2: rating and notes */
+    for(int i=0;i<ndb;i++) fwrite(&db[i].rating,sizeof(int),1,fp);
+    for(int i=0;i<ndb;i++) fwrite(db[i].notes,512,1,fp);
     fclose(fp);
 }
 static void load_d(void){
@@ -1171,8 +1232,11 @@ static void load_d(void){
         set_theme_instant(t);
     else
         set_theme_instant(0);
-    { int sm=0; if(fread(&sm,sizeof(int),1,fp)==1&&sm>=0&&sm<4) sort_mode=(SortMode)sm; }
+    { int sm=0; if(fread(&sm,sizeof(int),1,fp)==1&&sm>=0&&sm<5) sort_mode=(SortMode)sm; }
     { int vm=0; if(fread(&vm,sizeof(int),1,fp)==1&&vm>=0&&vm<2) view_mode=(ViewMode)vm; }
+    /* v2: rating and notes — guarded so old saves load cleanly */
+    for(int i=0;i<lim;i++){ int r=0; if(fread(&r,sizeof(int),1,fp)==1&&r>=0&&r<=10) db[i].rating=r; }
+    for(int i=0;i<lim;i++) fread(db[i].notes,512,1,fp);
     fclose(fp);
 }
 
@@ -1398,9 +1462,9 @@ static void draw_tbbtn(TBBtnType type, int cx2, float ht){
 
 static void draw_sort_dropdown(void){
     if(sort_dd_anim < 0.01f) return;
-    static const char *slbl[4]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest"};
+    static const char *slbl[5]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest","Top Rated"};
     float a = sort_dd_anim;
-    int total_h = 4*DD_ITEM_H + 6;  /* 2px top pad + items + 2px bottom pad + 2px border */
+    int total_h = 5*DD_ITEM_H + 6;
     int visible_h = (int)(total_h * a);
     if(visible_h < 2) return;
 
@@ -1423,7 +1487,7 @@ static void draw_sort_dropdown(void){
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         frr_aa(TC_X0+3, (int)(pill_y+0.5f)+2, DD_W-6, DD_ITEM_H-4, 5, pill);
     }
-    for(int i=0;i<4;i++){
+    for(int i=0;i<5;i++){
         int iy = TITLE_H+4+i*DD_ITEM_H;  /* shifted +2 for equal top/bottom gap */
         float hv = sort_item_hov[i];
         int act = (sort_mode==(SortMode)i);
@@ -1458,7 +1522,7 @@ static void draw_titlebar(void){
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
     }
 
-    static const char *slbl[4]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest"};
+    static const char *slbl[5]={"A \xe2\x86\x91 Z","Z \xe2\x86\x93 A","Newest","Oldest","Top Rated"};
 
     /* ── Sort dropdown button ── */
     {
@@ -1539,6 +1603,48 @@ static void draw_titlebar(void){
     }
 
     draw_titlebar_dots();
+
+    /* ── Stats toggle button — directly after view buttons ── */
+    {
+        int vx0   = TC_X0+DD_BTN_W+20;
+        int v_end = vx0 + 2*(VC_W+TC_GAP) - TC_GAP; /* right edge of last view btn */
+        /* separator sits midway between grid button and stats button */
+        int sbx   = v_end + TC_GAP + 4;   /* stats button left edge */
+        int sep_x = v_end + (sbx - v_end)/2; /* centred in the gap */
+        int act   = (cur_tab==T_STATS);
+        float hv  = tc_stats_hov;
+
+        /* separator */
+        { C4 sc2=C_DIM; sc2.a=80;
+          SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND); sc_(sc2);
+          SDL_RenderDrawLine(ren,sep_x,TC_Y+2,sep_x,TC_Y+TC_H-2);
+          SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); }
+
+        /* active bg pill */
+        if(act){
+            C4 vbg=lerpc(C_BG,C_ACC,0.18f); vbg.a=255;
+            C4 vbd=C_ACC; vbd.a=200;
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+            bfrr_aa(sbx,TC_Y,VC_W,TC_H,5,2,vbd,vbg);
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+        }
+
+        /* 3-bar chart icon — pixel-perfect centred in VC_W×TC_H */
+        { C4 ic = act ? C_ACC : lerpc(C_DIM,C_SUB,hv);
+          sc_(ic);
+          /* bars: w=3, gap=2 → total icon width=13, heights 4/9/6 */
+          int bw2=3, bg2=2, total_iw=bw2*3+bg2*2; /* 13 */
+          int total_ih=9; /* tallest bar */
+          int ix0 = sbx + (VC_W - total_iw)/2;
+          int iy0 = TC_Y + (TC_H - total_ih)/2 + total_ih; /* bottom baseline */
+          int hs[3]={4,9,6};
+          for(int k=0;k<3;k++){
+              SDL_Rect b={ix0+k*(bw2+bg2), iy0-hs[k], bw2, hs[k]};
+              SDL_RenderFillRect(ren,&b);
+          }
+        }
+    }
+
     draw_tbbtn(TB_CLOSE_BTN, TB_CX, tb_ch);
     draw_tbbtn(TB_MAX_BTN,   TB_MX, tb_mh);
     draw_tbbtn(TB_MIN_BTN,   TB_NX, tb_nh);
@@ -1785,7 +1891,10 @@ static void draw_tabs(void){
         char lbl[48];
         if(i==0) sprintf(lbl,"All");
         else      sprintf(lbl,"%s",SNAME[i]);
-        C4 tc=(i==0)?(act?C_ACC:C_SUB):(act?SCOL[i-1]:C_SUB);
+        C4 tc;
+        if(i==0)               tc=(act?C_ACC:C_SUB);
+        else if(i<N_TABS-1)    tc=(act?SCOL[i-1]:C_SUB);
+        else                   tc=(act?C_ACC:C_SUB); /* Stats tab */
         rtxcen(f12,lbl,tx,TAB_Y,tw,TAB_H,tc);
     }
 }
@@ -1813,6 +1922,33 @@ static void draw_row(int ri, int ay){
     rtxcen(f12,g->genre, YR_X_,genre_y, YR_W,fh12,lerpc(C_DIM,C_SUB,ht*0.5f));
 
     int bby=ay+BTN_YO;
+
+    /* ── Rating ── */
+    {
+        int ry=ay+(ROW_H-TTF_FontHeight(f12))/2;
+        if(g->rating>0){
+            char rbuf[8];
+            snprintf(rbuf,sizeof(rbuf),"\xe2\x98\x85 %d",g->rating);
+            float t=((float)g->rating-1.f)/9.f;
+            C4 rc=lerpc(MK4(150,130,50,255),SCOL[S_FAV],t);
+            rtxcen(f12,rbuf,RAT_X_,ry,RAT_W,TTF_FontHeight(f12),rc);
+        } else {
+            rtxcen(f12,"\xe2\x80\x93",RAT_X_,ry,RAT_W,TTF_FontHeight(f12),C_DIM);
+        }
+    }
+
+    /* ── Notes button ── */
+    { int nbx=NOTE_BTN_X_, nby=bby;
+      int has_note=(g->notes[0]!=0);
+      C4 nb_bg  = lerpc(C_BTNI, has_note?C_ACC:C_SEP, ht*0.5f);
+      C4 nb_brd = lerpc(C_SEP,  has_note?C_ACC:C_SUB, ht*0.7f);
+      bfrr(nbx,nby,NOTE_BTN_SZ,NOTE_BTN_SZ,5,1,nb_brd,nb_bg);
+      C4 ic2 = lerpc(C_DIM, has_note?C_ACC:C_TXT, ht*0.5f); sc_(ic2);
+      int ix=nbx+NOTE_BTN_SZ/2-5, iy=nby+NOTE_BTN_SZ/2-5;
+      for(int li=0;li<3;li++)
+          SDL_RenderDrawLine(ren,ix,iy+li*4,ix+10,iy+li*4);
+    }
+
     for(int j=0;j<N_STATUS;j++){
         int bx=BTN_LX_+j*(BTN_SZ+BTN_GAP);
         int active=g->st[j];
@@ -1833,7 +1969,7 @@ static void draw_row(int ri, int ay){
                      MK4(255,255,255,255), hv*0.65f);
             brc=lerpc(C_SEP,tintc(s3,1.2f),hv*0.8f);
         }
-        bfrr_aa(bx,bby,BTN_SZ,BTN_SZ,5,1,brc,bg2);
+        bfrr(bx,bby,BTN_SZ,BTN_SZ,5,1,brc,bg2);
         rtxcen(f12,SLBL[j],bx,bby,BTN_SZ,BTN_SZ,lc);
     }
 }
@@ -1874,13 +2010,29 @@ static void draw_grid_card(int ri, int x, int y){
         fr_(x, y+strip_h, GRID_W, 10, bg2);
     }
 
+    /* (rating now shown between name and genre/year — see below) */
+
+    /* ── Notes button — below accent strip, top-right of card ── */
+    { int nb=18, nbx=x+GRID_W-nb-4, nby=y+14;
+      int has_note=(g->notes[0]!=0);
+      C4 nb_bg  = lerpc(C_BTNI, has_note?C_ACC:C_SEP, ht*0.5f);
+      C4 nb_brd = lerpc(C_SEP,  has_note?C_ACC:C_SUB, ht*0.7f);
+      bfrr(nbx,nby,nb,nb,4,1,nb_brd,nb_bg);
+      C4 ic2 = lerpc(C_DIM, has_note?C_ACC:C_TXT, ht*0.5f); sc_(ic2);
+      int ix=nbx+nb/2-4, iy=nby+nb/2-4;
+      for(int li=0;li<3;li++)
+          SDL_RenderDrawLine(ren,ix,iy+li*3,ix+8,iy+li*3);
+    }
+
     int tx  = x+8;
     int tw2 = GRID_W-16;
     int fh12= TTF_FontHeight(f12);
     int btn_by  = y + GRID_H - GBSZ - 4;
     int info_by = btn_by - fh12 - 5;
+    /* rating line sits between name block and info line */
+    int rat_by  = info_by - fh12 - 3;
     int name_y  = y + 11;
-    int name_h  = info_by - name_y - 4;
+    int name_h  = rat_by - name_y - 4;
 
     {
         C4 tc = lerpc(C_TXT, MK4(255,255,255,255), ht*0.3f);
@@ -1917,6 +2069,15 @@ static void draw_grid_card(int ri, int x, int y){
                 rtxcen(f12,l2e,x,ty2+fh12+2, GRID_W,fh12,tc);
             }
         }
+        (void)tc2;
+    }
+
+    /* Rating — centred between name block and genre/year */
+    if(g->rating>0){
+        char rbuf[10]; snprintf(rbuf,sizeof(rbuf),"\xe2\x98\x85 %d",g->rating);
+        float t=((float)g->rating-1.f)/9.f;
+        C4 rc=lerpc(MK4(150,130,50,220),SCOL[S_FAV],t);
+        rtxcen(f12,rbuf,x,rat_by,GRID_W,fh12,rc);
     }
 
     {
@@ -2116,8 +2277,494 @@ static void draw_grid(void){
     draw_page_bar();
 }
 
+/* ── Stats screen ─────────────────────────────────────────────────── */
+static void draw_stats(void){
+    /* fully transparent — background texture shows through */
+
+    /* dark card behind all content so text reads against any background */
+    { C4 card=C_TBAR; card.a=180;
+      fblend(0,LST_Y,LIST_W_,LST_H_+PG_H,card); }
+
+    /* ── Compute stats ── */
+    int by_status[N_STATUS]={0};
+    int total_tracked=0, untracked=0, n_rated=0;
+    long rating_sum=0;
+    int rating_hist[11]={0};
+    #define MAX_GENRES 64
+    char gnames[MAX_GENRES][32]; int gcounts[MAX_GENRES]={0}; int ngnames=0;
+    memset(gnames,0,sizeof(gnames));
+    static const char *DEC_LBL[]={"<80s","80s","90s","00s","10s","20s+"};
+    int decade_counts[6]={0};
+
+    for(int i=0;i<ndb;i++){
+        Game *g=&db[i];
+        int has=0;
+        for(int j=0;j<N_STATUS;j++) if(g->st[j]){ by_status[j]++; has=1; }
+        if(has) total_tracked++; else untracked++;
+        if(g->rating>0){ n_rated++; rating_sum+=g->rating; rating_hist[g->rating]++; }
+        /* genres: only games with at least one status set */
+        if(has){
+            int gf=-1;
+            for(int k=0;k<ngnames;k++) if(strcmp(gnames[k],g->genre)==0){ gf=k; break; }
+            if(gf<0&&ngnames<MAX_GENRES){ strncpy(gnames[ngnames],g->genre,31); gf=ngnames++; }
+            if(gf>=0) gcounts[gf]++;
+        }
+        int dec=(g->year<1980)?0:(g->year-1980)/10+1; if(dec>5)dec=5;
+        decade_counts[dec]++;
+    }
+    for(int a=0;a<ngnames-1;a++)
+        for(int b=a+1;b<ngnames;b++)
+            if(gcounts[b]>gcounts[a]){
+                int tc2=gcounts[a]; gcounts[a]=gcounts[b]; gcounts[b]=tc2;
+                char tmp[32]; memcpy(tmp,gnames[a],32); memcpy(gnames[a],gnames[b],32); memcpy(gnames[b],tmp,32);
+            }
+    float avg_rating=(n_rated>0)?(float)rating_sum/(float)n_rated:0.f;
+    int hist_max=1;
+    for(int k=1;k<=10;k++) if(rating_hist[k]>hist_max) hist_max=rating_hist[k];
+    #undef MAX_GENRES
+
+    int fh12=TTF_FontHeight(f12), fh18=TTF_FontHeight(f18);
+    /* Layout constants */
+    int PAD  = 32;   /* outer left margin */
+    int RPAD = 32;   /* outer right margin */
+    int GAP  = 12;   /* gap between sections */
+    int CGAP = 36;   /* gap between two-column halves */
+    int y    = LST_Y + 18;
+    int avail_w = LIST_W_ - PAD - RPAD;
+
+    /* subtle card behind all content so text reads against the transparent bg */
+    /* no card overlay needed — solid background already set */
+
+    /* ════════════════════════════════════════════
+       ROW 1 — three big stat numbers, full width
+       ════════════════════════════════════════════ */
+    {
+        struct { const char *lbl; int val; C4 col; } cs[3]={
+            {"In Library", ndb,           C_TXT},
+            {"Tracked",    total_tracked,  C_ACC},
+            {"Untracked",  untracked,      C_DIM},
+        };
+        int cw = avail_w / 3;
+        for(int i=0;i<3;i++){
+            int cx = PAD + i*cw;
+            char num[16]; snprintf(num,sizeof(num),"%d",cs[i].val);
+            /* big number */
+            int nw=txw_(f22,num);
+            rtx(f22,num, cx+(cw-nw)/2, y, cs[i].col);
+            /* label underneath */
+            int lw2=txw_(f12,cs[i].lbl);
+            C4 lc=C_DIM; if(i==1)lc=C_SUB;
+            rtx(f12,cs[i].lbl, cx+(cw-lw2)/2, y+fh18+3, lc);
+            /* subtle vertical divider */
+            if(i>0){
+                C4 dv={C_SEP.r,C_SEP.g,C_SEP.b,55};
+                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                sc_(dv); SDL_RenderDrawLine(ren,cx,y+2,cx,y+fh18+fh12+4);
+                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+            }
+        }
+        y += fh18 + fh12 + GAP + 10;
+    }
+
+    /* ── separator ── */
+    { C4 s2={C_SEP.r,C_SEP.g,C_SEP.b,100};
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      sc_(s2); SDL_RenderDrawLine(ren,PAD,y,LIST_W_-RPAD,y);
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); y+=GAP+2; }
+
+    /* ════════════════════════════════════════════
+       ROW 2 — status pills, evenly distributed
+       ════════════════════════════════════════════ */
+    {
+        int pw[N_STATUS], total_pw=0;
+        for(int j=0;j<N_STATUS;j++){
+            char buf[32]; snprintf(buf,sizeof(buf),"%s  %d",SLBL[j],by_status[j]);
+            pw[j]=txw_(f12,buf)+18; total_pw+=pw[j];
+        }
+        int pill_h=24;
+        int gap2=(avail_w-total_pw)/(N_STATUS-1); if(gap2<6)gap2=6;
+        int px=PAD;
+        for(int j=0;j<N_STATUS;j++){
+            char buf[32]; snprintf(buf,sizeof(buf),"%s  %d",SLBL[j],by_status[j]);
+            C4 bg2=SCOL[j]; bg2.r/=4; bg2.g/=4; bg2.b/=4; bg2.a=220;
+            frr_aa(px,y,pw[j],pill_h,7,bg2);
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+            C4 bc2=SCOL[j]; bc2.a=180; sc_(bc2);
+            SDL_Rect rr2={px,y,pw[j],pill_h}; SDL_RenderDrawRect(ren,&rr2);
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+            C4 pc=SCOL[j]; pc.r=SDL_min(255,(int)pc.r*2); pc.g=SDL_min(255,(int)pc.g*2); pc.b=SDL_min(255,(int)pc.b*2);
+            rtxcen(f12,buf,px,y,pw[j],pill_h,pc);
+            px+=pw[j]+gap2;
+        }
+        y+=pill_h+GAP+6;
+    }
+
+    /* ── separator ── */
+    { C4 s2={C_SEP.r,C_SEP.g,C_SEP.b,100};
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      sc_(s2); SDL_RenderDrawLine(ren,PAD,y,LIST_W_-RPAD,y);
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); y+=GAP+2; }
+
+    /* ════════════════════════════════════════════════════════
+       ROW 3 — two columns
+         LEFT  (55%): Top Genres horizontal bars
+         RIGHT (45%): Rating histogram OR "no ratings yet"
+       ════════════════════════════════════════════════════════ */
+    {
+        int lw3 = (int)(avail_w * 0.55f) - CGAP/2;
+        int rw3 = avail_w - lw3 - CGAP;
+        int lx3 = PAD, rx3 = PAD + lw3 + CGAP;
+        int row_top = y;
+
+        /* ── LEFT: Top Genres ── */
+        {
+            rtx(f12,"TOP GENRES (tracked)", lx3, y, C_TXT); y+=fh12+6;
+            int show_g = ngnames<9?ngnames:9;
+            if(show_g==0){
+                rtx(f12,"No tracked games yet.", lx3, y, C_DIM);
+            } else {
+            int lbl_w  = 90, cnt_w=28;
+            int bar_max_w = lw3 - lbl_w - cnt_w - 6;
+            int top_cnt = (gcounts[0]>0)?gcounts[0]:1;
+            int bar_h=14, bar_row=bar_h+5;
+            for(int k=0;k<show_g;k++){
+                int bw3=(int)((float)gcounts[k]/(float)top_cnt*(float)bar_max_w);
+                if(bw3<2) bw3=2;
+                float fade=1.f-(float)k*0.075f; if(fade<0.3f)fade=0.3f;
+                C4 bc3={C_ACC.r,C_ACC.g,C_ACC.b,(Uint8)(210*fade)};
+                C4 trk3={C_SEP.r,C_SEP.g,C_SEP.b,35};
+                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                frr_aa(lx3+lbl_w, y, bar_max_w, bar_h, 3, trk3);
+                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+                frr_aa(lx3+lbl_w, y, bw3, bar_h, 3, bc3);
+                char ge[32]; strncpy(ge,gnames[k],31); ge[31]=0;
+                int ty2=y+(bar_h-fh12)/2;
+                rtxclip(f12,ge, lx3, ty2, lbl_w-6, C_TXT);
+                char cb3[16]; snprintf(cb3,sizeof(cb3),"%d",gcounts[k]);
+                rtx(f12,cb3, lx3+lbl_w+bw3+5, ty2, C_SUB);
+                y+=bar_row;
+            }
+            } /* end show_g>0 */
+        }
+
+        /* ── RIGHT: Rating histogram ── */
+        {
+            int ry=row_top;
+            if(n_rated>0){
+                char hdr2[72];
+                snprintf(hdr2,sizeof(hdr2),"\xe2\x98\x85 RATINGS   avg %.1f / 10   (%d rated)",avg_rating,n_rated);
+                rtx(f12,hdr2, rx3, ry, C_TXT); ry+=fh12+6;
+
+                int bar_w2=(rw3 - 9*3)/10; if(bar_w2<12)bar_w2=12;
+                int bh_max=LST_H_ - (ry-LST_Y) - fh12 - 20;
+                if(bh_max<50) bh_max=50;
+                int hx2=rx3;
+                for(int k=1;k<=10;k++){
+                    int bh2=(int)((float)rating_hist[k]/(float)hist_max*(float)bh_max);
+                    if(bh2<2&&rating_hist[k]>0) bh2=2;
+                    float t2=((float)k-1.f)/9.f;
+                    C4 bc2=lerpc(MK4(140,120,40,200),SCOL[S_FAV],t2);
+                    C4 trk2={C_SEP.r,C_SEP.g,C_SEP.b,35};
+                    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                    frr_aa(hx2,ry,bar_w2,bh_max,3,trk2);
+                    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+                    if(bh2>0) frr_aa(hx2,ry+bh_max-bh2,bar_w2,bh2,3,bc2);
+                    /* count label — only draw if it fits above the bar without overlapping the header */
+                    if(rating_hist[k]>0 && bh2 < bh_max - fh12 - 2){
+                        char lb2[8]; snprintf(lb2,sizeof(lb2),"%d",rating_hist[k]);
+                        rtxcen(f12,lb2, hx2, ry+bh_max-bh2-fh12-1, bar_w2, fh12, bc2);
+                    }
+                    char lb[4]; snprintf(lb,sizeof(lb),"%d",k);
+                    rtxcen(f12,lb, hx2, ry+bh_max+3, bar_w2, fh12, C_DIM);
+                    hx2+=bar_w2+3;
+                }
+            } else {
+                rtx(f12,"\xe2\x98\x85 RATINGS", rx3, ry, C_SUB); ry+=fh12+10;
+                rtx(f12,"No games rated yet.", rx3, ry, C_DIM); ry+=fh12+4;
+                rtx(f12,"Click \xe2\x98\x85 in list view to rate.", rx3, ry, C_DIM);
+            }
+        }
+
+        /* advance y past both columns */
+        int right_bottom = row_top + fh12+6 + LST_H_ - (row_top - LST_Y) - fh12 - 20;
+        if(y < right_bottom) y = right_bottom;
+        y += GAP + 4;
+    }
+
+    /* ── separator ── */
+    { C4 s2={C_SEP.r,C_SEP.g,C_SEP.b,45};
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      sc_(s2); SDL_RenderDrawLine(ren,PAD,y,LIST_W_-RPAD,y);
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); y+=GAP+2; }
+
+    /* ════════════════════════════════════════════
+       ROW 4 — Decade distribution, full width
+       ════════════════════════════════════════════ */
+    if(y + fh12 + 8 + 52 + fh12 + 4 < LST_Y + LST_H_){
+        rtx(f12,"BY DECADE", PAD, y, C_TXT); y+=fh12+6;
+        int dec_max=1;
+        for(int k=0;k<6;k++) if(decade_counts[k]>dec_max) dec_max=decade_counts[k];
+        int bw5=(avail_w - 5*12)/6; if(bw5<40)bw5=40;
+        int bh5_max=52;
+        int dx2=PAD;
+        for(int k=0;k<6;k++){
+            int bh5=(int)((float)decade_counts[k]/(float)dec_max*(float)bh5_max);
+            if(bh5<2&&decade_counts[k]>0) bh5=2;
+            float tf=(float)k/5.f;
+            C4 bc5=lerpc(C_SUB,C_ACC,tf); bc5.a=200;
+            C4 trk5={C_SEP.r,C_SEP.g,C_SEP.b,35};
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+            frr_aa(dx2,y,bw5,bh5_max,4,trk5);
+            SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+            if(bh5>0) frr_aa(dx2,y+bh5_max-bh5,bw5,bh5,4,bc5);
+            if(decade_counts[k]>0){
+                char cb5[16]; snprintf(cb5,sizeof(cb5),"%d",decade_counts[k]);
+                rtxcen(f12,cb5, dx2, y+bh5_max-bh5-fh12-2, bw5, fh12, C_TXT);
+            }
+            rtxcen(f12,DEC_LBL[k], dx2, y+bh5_max+4, bw5, fh12, C_SUB);
+            dx2+=bw5+12;
+        }
+    }
+}
+
+/* ── Notes overlay ───────────────────────────────────────────────── */
+#define NOTE_OW  660
+#define NOTE_OH  400
+#define NOTE_PAD  20
+#define NOTE_LH   22
+
+/* note text-area layout — used also in click handlers */
+static void note_area(int *ax,int *ay,int *aw,int *ah){
+    int ow=NOTE_OW, oh=NOTE_OH;
+    int ox=(win_w-ow)/2, oy=(win_h-oh)/2;
+    int fh12=TTF_FontHeight(f12), fh18=TTF_FontHeight(f18);
+    int ty=oy+NOTE_PAD+fh18+4+fh12+10+1+8; /* after title+meta+sep */
+    int hint_h=fh12+18;
+    *ax=ox+NOTE_PAD; *ay=ty;
+    *aw=ow-NOTE_PAD*2; *ah=oh-(ty-oy)-NOTE_PAD-hint_h;
+}
+
+/* map a pixel x,y inside the note area to a char offset in ns */
+static int note_px_to_pos(const char *ns, int len, int ax, int tw, int ay, int mx2, int my2){
+    int tp=8;
+    int tx2=ax+tp;
+    int cy=ay+tp;
+    int fh14=TTF_FontHeight(f14);
+    int best_pos=0;
+    int i=0;
+    while(i<=len){
+        int j=i;
+        while(j<len&&ns[j]!='\n'){
+            char tmp[512]={0}; int tc2=j-i; if(tc2>511)tc2=511;
+            memcpy(tmp,ns+i,tc2); tmp[tc2]=0;
+            if(txw_(f14,tmp)>tw&&j>i) break;
+            j++;
+        }
+        if(j<len&&ns[j]!='\n'){
+            int jj=j; while(jj>i&&ns[jj]!=' ') jj--;
+            if(jj>i) j=jj;
+        }
+        char linebuf[512]={0};
+        int ll=j-i; if(ll>511)ll=511;
+        memcpy(linebuf,ns+i,ll);
+        /* is the click on this line? */
+        if(my2>=cy&&my2<cy+fh14){
+            /* find closest character */
+            int best=i; int best_dist=99999;
+            for(int k=0;k<=(int)strlen(linebuf);k++){
+                char pre[512]={0}; memcpy(pre,linebuf,k);
+                int px2=tx2+txw_(f14,pre);
+                int dist=abs(mx2-px2);
+                if(dist<best_dist){ best_dist=dist; best=i+k; }
+            }
+            return best;
+        }
+        best_pos=(j<len&&ns[j]=='\n')?j+1:j;
+        cy+=NOTE_LH;
+        if(ns[j]=='\n') j++;
+        i=j;
+        if(i>=len) break;
+    }
+    /* click below all text → end */
+    if(my2>=cy) return len;
+    return best_pos;
+}
+
+static void draw_note_overlay(void){
+    if(note_anim<0.005f) return;
+    Game *g=(note_open>=0&&note_open<ndb)?&db[note_open]:NULL;
+    if(!g&&note_open<0) return;
+
+    int ow=NOTE_OW, oh=NOTE_OH;
+    int ox=(win_w-ow)/2, oy=(win_h-oh)/2;
+    float a=note_anim;
+
+    /* dim backdrop */
+    { C4 dim={0,0,0,(Uint8)(155*a)};
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      sc_(dim); SDL_Rect r={0,0,win_w,win_h}; SDL_RenderFillRect(ren,&r);
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); }
+
+    /* panel */
+    frr_aa(ox,oy,ow,oh,10,C_TBAR);
+    { SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      C4 bc=C_ACC; bc.a=(Uint8)(200*a);
+      bfrr_aa(ox,oy,ow,oh,10,1,bc,(C4){0,0,0,0});
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); }
+
+    if(!g) return;
+
+    int fh12=TTF_FontHeight(f12), fh14=TTF_FontHeight(f14), fh18=TTF_FontHeight(f18);
+    int ty=oy+NOTE_PAD;
+
+    /* title */
+    rtxclip(f18,g->name, ox+NOTE_PAD, ty, ow-NOTE_PAD*2, C_TXT);
+    ty+=fh18+4;
+
+    /* meta */
+    { char meta[80];
+      if(g->rating>0)
+          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d  \xc2\xb7  \xe2\x98\x85 %d/10",g->genre,g->year,g->rating);
+      else
+          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d",g->genre,g->year);
+      rtx(f12,meta, ox+NOTE_PAD, ty, C_SUB); }
+    ty+=fh12+10;
+
+    /* separator */
+    { C4 sep=C_SEP; sep.a=80;
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      sc_(sep); SDL_RenderDrawLine(ren,ox+NOTE_PAD,ty,ox+ow-NOTE_PAD,ty);
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); }
+    ty+=8; /* area_y starts here, matches note_area() */
+
+    /* text area */
+    int hint_h=fh12+18;
+    int area_x=ox+NOTE_PAD, area_y=ty;
+    int area_w=ow-NOTE_PAD*2, area_h=oh-(ty-oy)-NOTE_PAD-hint_h;
+    int box_r=7, tp=8;
+    int tx2=area_x+tp, tw=area_w-tp*2;
+
+    /* rounded fill + uniform 1px border via 4 separate lines */
+    frr_aa(area_x,area_y,area_w,area_h,box_r,C_ROWB);
+    { SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+      C4 brd=C_ACC; brd.a=140; sc_(brd);
+      SDL_RenderDrawLine(ren,area_x,area_y,area_x+area_w-1,area_y);           /* top    */
+      SDL_RenderDrawLine(ren,area_x,area_y+area_h-1,area_x+area_w-1,area_y+area_h-1); /* bottom */
+      SDL_RenderDrawLine(ren,area_x,area_y,area_x,area_y+area_h-1);           /* left   */
+      SDL_RenderDrawLine(ren,area_x+area_w-1,area_y,area_x+area_w-1,area_y+area_h-1); /* right  */
+      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE); }
+
+    /* clip strictly inside the rounded box */
+    SDL_Rect clip2={area_x+2,area_y+2,area_w-4,area_h-4};
+    SDL_RenderSetClipRect(ren,&clip2);
+
+    { char *ns=g->notes;
+      int len=(int)strlen(ns);
+      int cy=area_y+tp;
+      Uint32 ticks=SDL_GetTicks();
+      int cur_vis=((ticks/530)%2==0);
+      int sel_a=note_sel0<note_cur?note_sel0:note_cur;
+      int sel_b=note_sel0<note_cur?note_cur:note_sel0;
+      int has_sel=(sel_a!=sel_b);
+
+      if(len==0){
+          /* empty: placeholder + single cursor at start */
+          rtx(f14,"Write your notes here...",tx2,area_y+tp,C_DIM);
+          if(cur_vis){
+              SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+              sc_(C_ACC);
+              SDL_RenderDrawLine(ren,tx2,area_y+tp,tx2,area_y+tp+fh14-1);
+              SDL_RenderDrawLine(ren,tx2+1,area_y+tp,tx2+1,area_y+tp+fh14-1);
+              SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+          }
+      } else {
+          /* track whether we've already drawn the cursor this frame */
+          int cursor_drawn=0;
+          int i=0;
+          while(i<len){
+              int j=i;
+              while(j<len&&ns[j]!='\n'){
+                  char tmp2[512]={0}; int tc2=j-i; if(tc2>511)tc2=511;
+                  memcpy(tmp2,ns+i,tc2); tmp2[tc2]=0;
+                  if(txw_(f14,tmp2)>tw&&j>i) break;
+                  j++;
+              }
+              if(j<len&&ns[j]!='\n'){
+                  int jj=j; while(jj>i&&ns[jj]!=' ') jj--;
+                  if(jj>i) j=jj;
+              }
+              char linebuf[512]={0};
+              int ll=j-i; if(ll>511)ll=511;
+              memcpy(linebuf,ns+i,ll);
+              /* line owns positions i..j (j is the newline or wrap point) */
+              int line_end=j;
+
+              if(cy+NOTE_LH>area_y&&cy<area_y+area_h){
+                  /* selection highlight */
+                  if(has_sel&&sel_a<=line_end&&sel_b>i){
+                      int hs=sel_a>i?sel_a:i, he=sel_b<line_end?sel_b:line_end;
+                      char ps[512]={0},pe[512]={0};
+                      int ls2=hs-i; if(ls2>(int)strlen(linebuf))ls2=(int)strlen(linebuf);
+                      int le2=he-i; if(le2>(int)strlen(linebuf))le2=(int)strlen(linebuf);
+                      if(ls2<0)ls2=0; if(le2<0)le2=0;
+                      memcpy(ps,linebuf,ls2); memcpy(pe,linebuf,le2);
+                      int sx2=tx2+txw_(f14,ps), ex2=tx2+txw_(f14,pe);
+                      if(ex2>sx2){
+                          C4 sc3=C_ACC; sc3.a=80;
+                          SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                          SDL_Rect sr2={sx2,cy,ex2-sx2,fh14}; sc_(sc3); SDL_RenderFillRect(ren,&sr2);
+                          SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+                      }
+                  }
+                  rtx(f14,linebuf,tx2,cy,C_TXT);
+                  /* cursor — strictly on the one line where note_cur lives,
+                     and only if cursor at end-of-line (j) is not a newline,
+                     i.e. this is the last visual segment of a paragraph */
+                  int is_nl = (j<len && ns[j]=='\n');
+                  int owns = (note_cur>=i && (is_nl ? note_cur<line_end : note_cur<=line_end));
+                  if(cur_vis && owns && !cursor_drawn){
+                      int cp=note_cur-i;
+                      int lb_len=(int)strlen(linebuf);
+                      if(cp>lb_len) cp=lb_len;
+                      char pre[512]={0}; memcpy(pre,linebuf,cp);
+                      int cxp=tx2+txw_(f14,pre);
+                      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                      sc_(C_ACC);
+                      SDL_RenderDrawLine(ren,cxp,cy,cxp,cy+fh14-1);
+                      SDL_RenderDrawLine(ren,cxp+1,cy,cxp+1,cy+fh14-1);
+                      SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+                      cursor_drawn=1;
+                  }
+              }
+              cy+=NOTE_LH;
+              if(ns[j]=='\n') j++;
+              i=j;
+              if(cy>area_y+area_h) break;
+          }
+          /* cursor on empty trailing line after a final '\n' */
+          if(cur_vis && !cursor_drawn && note_cur==len && ns[len-1]=='\n'){
+              if(cy+NOTE_LH>area_y&&cy<area_y+area_h){
+                  SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+                  sc_(C_ACC);
+                  SDL_RenderDrawLine(ren,tx2,cy,tx2,cy+fh14-1);
+                  SDL_RenderDrawLine(ren,tx2+1,cy,tx2+1,cy+fh14-1);
+                  SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+              }
+          }
+      }
+    }
+    SDL_RenderSetClipRect(ren,NULL);
+
+    /* hint — vertically centred in bottom strip */
+    { int hy = oy+oh-NOTE_PAD-hint_h/2-fh12/2;
+      rtxcen(f12,"[Esc] close  \xc2\xb7  Ctrl+A select all  \xc2\xb7  Ctrl+C/V copy/paste",
+             ox,hy,ow,fh12,C_DIM); }
+    (void)fh14;
+}
+
 /* ── List ─────────────────────────────────────────────────────── */
 static void draw_list(void){
+    if(cur_tab==T_STATS){ draw_stats(); return; }
     if(view_mode==VIEW_GRID){ draw_grid(); return; }
     int lh=LST_H_;
     SDL_Rect clip={0,LST_Y,win_w,lh};
@@ -2173,7 +2820,7 @@ static void draw_sbar(void){
 /* ═══════════════════════ Helpers ═══════════════════════════════ */
 static void do_tab(int i){
     cur_tab=(TabId)i; scr_tgt=0; scr_f=0; cur_page=0;
-    tab_itx=(float)TAB_X_(i);
+    if(i<N_TABS) tab_itx=(float)TAB_X_(i); /* don't move pill for T_STATS */
     rebuild();
 }
 static int hit_tab(int mx,int my){
@@ -2223,6 +2870,7 @@ static void init_db(void){
         strncpy(db[i].name, GDB[i].n,127); db[i].name[127]=0;
         strncpy(db[i].genre,GDB[i].g, 31); db[i].genre[31]=0;
         db[i].year=GDB[i].y; memset(db[i].st,0,N_STATUS);
+        db[i].rating=0; db[i].notes[0]=0;
         strlower(db[i].name, db[i].name_lc, 128);
         strlower(db[i].genre,db[i].genre_lc, 32);
     }
@@ -2335,19 +2983,19 @@ int main(int argc,char **argv){
                 if(ev.window.event==SDL_WINDOWEVENT_RESIZED||
                    ev.window.event==SDL_WINDOWEVENT_SIZE_CHANGED){
                     SDL_GetWindowSize(win,&win_w,&win_h);
-                    tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);
+                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);}
                     apply_rgn(win_w,win_h,!win_maximized);
                     rebuild();
                 }
                 if(ev.window.event==SDL_WINDOWEVENT_MAXIMIZED){
                     win_maximized=1; SDL_GetWindowSize(win,&win_w,&win_h);
                     apply_rgn(win_w,win_h,0);
-                    tab_ix=tab_itx=(float)TAB_X_((int)cur_tab); rebuild();
+                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);} rebuild();
                 }
                 if(ev.window.event==SDL_WINDOWEVENT_RESTORED){
                     win_maximized=0; SDL_GetWindowSize(win,&win_w,&win_h);
                     apply_rgn(win_w,win_h,1);
-                    tab_ix=tab_itx=(float)TAB_X_((int)cur_tab); rebuild();
+                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_((int)cur_tab);} rebuild();
                 }
                 break;
 
@@ -2355,9 +3003,33 @@ int main(int argc,char **argv){
                 if(ev.button.button==SDL_BUTTON_LEFT){
                     int mx=ev.button.x, my=ev.button.y;
 
+                        /* ── Note overlay: click inside places cursor, outside closes ── */
+                        if(note_open>=0){
+                            int ow2=NOTE_OW,oh2=NOTE_OH;
+                            int ox2=(win_w-ow2)/2,oy2=(win_h-oh2)/2;
+                            if(mx>=ox2&&mx<ox2+ow2&&my>=oy2&&my<oy2+oh2){
+                                /* click inside text area → place cursor */
+                                int ax2,ay2,aw2,ah2; note_area(&ax2,&ay2,&aw2,&ah2);
+                                if(mx>=ax2&&mx<ax2+aw2&&my>=ay2&&my<ay2+ah2){
+                                    int tp2=8, tw2=aw2-tp2*2;
+                                    char *ns2=db[note_open].notes;
+                                    int len2=(int)strlen(ns2);
+                                    SDL_Keymod km2=SDL_GetModState();
+                                    int shift2=(km2&KMOD_SHIFT)!=0;
+                                    int pos=note_px_to_pos(ns2,len2,ax2,tw2,ay2,mx,my);
+                                    note_cur=pos;
+                                    if(!shift2) note_sel0=pos;
+                                    note_drag=1;
+                                }
+                            } else {
+                                note_open=-1; note_drag=0; save_defer();
+                            }
+                            goto done_click;
+                        }
+
                         /* sort dropdown item click — items live BELOW the title bar */
                         if(sort_dd_open&&sort_dd_anim>0.1f){
-                            for(int i=0;i<4;i++){
+                            for(int i=0;i<5;i++){
                                 int item_y=TITLE_H+4+i*DD_ITEM_H;
                                 if(mx>=TC_X0&&mx<TC_X0+DD_W&&my>=item_y&&my<item_y+DD_ITEM_H){
                                     if(sort_mode!=(SortMode)i){ sort_mode=(SortMode)i; sfx_sort(); rebuild(); save_d(); }
@@ -2387,6 +3059,17 @@ int main(int argc,char **argv){
                                             scr_tgt=0; scr_f=0; save_d();
                                         }
                                         break;
+                                    }
+                                }
+                                /* stats toggle button */
+                                int sbx_s=TC_X0+DD_BTN_W+20+2*(VC_W+TC_GAP)-TC_GAP+TC_GAP+4;
+                                if(mx>=sbx_s&&mx<sbx_s+VC_W){
+                                    hit_tb_btn=1;
+                                    if(cur_tab==T_STATS){
+                                        do_tab((int)prev_tab); sfx_tab();
+                                    } else {
+                                        prev_tab=cur_tab;
+                                        do_tab((int)T_STATS); sfx_tab();
                                     }
                                 }
                             }
@@ -2494,8 +3177,29 @@ int main(int argc,char **argv){
                     if(view_mode==VIEW_LIST){
                         int r=row_at(mx,my);
                         if(r>=0){
+                            /* ── Rating column: left-click cycles 1-10, right-click clears ── */
+                            int ay_r=LST_Y+LIST_TOP_PAD+(r-page_first())*ROW_H;
+                            if(mx>=RAT_X_&&mx<RAT_X_+RAT_W&&my>=ay_r&&my<ay_r+ROW_H){
+                                int gi=flt[r];
+                                db[gi].rating=(db[gi].rating%10)+1;
+                                sfx_toggle(); save_defer(); goto done_click;
+                            }
+                            /* ── Status buttons ── */
                             int b=btn_at(mx,my,r);
                             if(b>=0){ int gi=flt[r]; db[gi].st[b]^=1; sfx_toggle(); btn_fl[gi][b]=1; rebuild(); save_defer(); }
+                            else {
+                                /* ── Note button opens notes ── */
+                                int ay_r=LST_Y+LIST_TOP_PAD+(r-page_first())*ROW_H;
+                                int nby2=ay_r+BTN_YO;
+                                int gi=flt[r];
+                                if(mx>=NOTE_BTN_X_&&mx<NOTE_BTN_X_+NOTE_BTN_SZ
+                                   &&my>=nby2&&my<nby2+NOTE_BTN_SZ){
+                                    note_open=gi;
+                                    note_cur=(int)strlen(db[gi].notes);
+                                    note_sel0=note_cur;
+                                    sfx_click(); srch_blur();
+                                }
+                            }
                         }
                     } else {
                         if(hov_db>=0){
@@ -2524,6 +3228,15 @@ int main(int argc,char **argv){
                                             break;
                                         }
                                     }
+                                } else {
+                                    /* note button — top-right corner of card */
+                                    int nb=18, nbx2=cx2+GRID_W-nb-4, nby3=cy2+14;
+                                    if(mx>=nbx2&&mx<nbx2+nb&&my>=nby3&&my<nby3+nb){
+                                        note_open=hov_db;
+                                        note_cur=(int)strlen(db[hov_db].notes);
+                                        note_sel0=note_cur;
+                                        sfx_click(); srch_blur();
+                                    }
                                 }
                                 break;
                             }
@@ -2535,13 +3248,25 @@ int main(int argc,char **argv){
                    &&ev.button.y<TITLE_H&&ev.button.x<win_w-3*TB_BTN_W){
                     toggle_maximize();
                 }
+                /* ── Right-click: clear rating ── */
+                if(ev.button.button==SDL_BUTTON_RIGHT&&note_open<0&&view_mode==VIEW_LIST){
+                    int mx2r=ev.button.x, my2r=ev.button.y;
+                    int r2r=row_at(mx2r,my2r);
+                    if(r2r>=0){
+                        int ay_r2=LST_Y+LIST_TOP_PAD+(r2r-page_first())*ROW_H;
+                        if(mx2r>=RAT_X_&&mx2r<RAT_X_+RAT_W&&my2r>=ay_r2&&my2r<ay_r2+ROW_H){
+                            db[flt[r2r]].rating=0;
+                            sfx_toggle(); save_defer();
+                        }
+                    }
+                }
                 break;
 
             case SDL_MOUSEBUTTONUP:
                 if(ev.button.button==SDL_BUTTON_LEFT){
                     if(rz_drag){ SDL_GetWindowSize(win,&win_w,&win_h); apply_rgn(win_w,win_h,!win_maximized); }
                     win_drag=0; rz_drag=0; rz_active=RZ_NONE; drag_sb=0;
-                    srch_drag=0;
+                    srch_drag=0; note_drag=0;
                     SDL_SetCursor(cur_arr);
                 }
                 break;
@@ -2549,12 +3274,26 @@ int main(int argc,char **argv){
             case SDL_MOUSEMOTION:{
                 int mx=ev.motion.x, my=ev.motion.y;
                 /* If left button was released outside the window, cancel drag/resize */
-                if((win_drag||rz_drag||drag_sb||srch_drag) &&
+                if((win_drag||rz_drag||drag_sb||srch_drag||note_drag) &&
                    !(SDL_GetGlobalMouseState(NULL,NULL) & SDL_BUTTON_LMASK)){
                     if(rz_drag){ SDL_GetWindowSize(win,&win_w,&win_h); apply_rgn(win_w,win_h,!win_maximized); }
-                    win_drag=0; rz_drag=0; rz_active=RZ_NONE; drag_sb=0; srch_drag=0;
+                    win_drag=0; rz_drag=0; rz_active=RZ_NONE; drag_sb=0; srch_drag=0; note_drag=0;
                     SDL_SetCursor(cur_arr);
                 }
+                /* note drag-select */
+                if(note_drag && note_open>=0){
+                    int ax2,ay2,aw2,ah2; note_area(&ax2,&ay2,&aw2,&ah2);
+                    int tp2=8, tw2=aw2-tp2*2;
+                    /* clamp mouse to text area so selection stays sane */
+                    int cmx=mx<ax2?ax2:(mx>=ax2+aw2?ax2+aw2-1:mx);
+                    int cmy=my<ay2?ay2:(my>=ay2+ah2?ay2+ah2-1:my);
+                    char *ns2=db[note_open].notes;
+                    int len2=(int)strlen(ns2);
+                    note_cur=note_px_to_pos(ns2,len2,ax2,tw2,ay2,cmx,cmy);
+                    break;
+                }
+                /* when overlay is open, don't update row/grid hover */
+                if(note_open>=0) break;
                 hov_db=-1;
                 if(view_mode==VIEW_GRID){
                     if(my>=LST_Y&&my<LST_Y+LST_H_&&mx>=0&&mx<LIST_W_){
@@ -2607,6 +3346,112 @@ int main(int argc,char **argv){
                 int ctrl =(km&KMOD_CTRL) !=0;
                 int shift=(km&KMOD_SHIFT)!=0;
                 SDL_Keycode sym=ev.key.keysym.sym;
+
+                /* ── Notes overlay keyboard ── */
+                if(note_open>=0){
+                    if(sym==SDLK_ESCAPE){ sfx_click(); note_open=-1; save_defer(); break; }
+                    char *ns=db[note_open].notes;
+                    int  len=(int)strlen(ns);
+                    int  has_sel=(note_sel0!=note_cur);
+                    /* helper: delete selection */
+                    #define NOTE_DEL_SEL() do{ \
+                        int a_=note_sel0<note_cur?note_sel0:note_cur; \
+                        int b_=note_sel0<note_cur?note_cur:note_sel0; \
+                        memmove(ns+a_,ns+b_,len-b_+1); \
+                        note_cur=note_sel0=a_; len=(int)strlen(ns); \
+                        has_sel=0; save_defer(); \
+                    }while(0)
+                    if(sym==SDLK_BACKSPACE){
+                        if(has_sel){ NOTE_DEL_SEL(); }
+                        else if(note_cur>0){
+                            if(ctrl){ /* Ctrl+Backspace: delete word left */
+                                int np=note_cur;
+                                while(np>0&&ns[np-1]==' ') np--;
+                                while(np>0&&ns[np-1]!=' '&&ns[np-1]!='\n') np--;
+                                memmove(ns+np,ns+note_cur,len-note_cur+1);
+                                note_cur=note_sel0=np;
+                            } else {
+                                memmove(ns+note_cur-1,ns+note_cur,len-note_cur+1);
+                                note_cur--; note_sel0=note_cur;
+                            }
+                            save_defer();
+                        }
+                    } else if(sym==SDLK_DELETE){
+                        if(has_sel){ NOTE_DEL_SEL(); }
+                        else if(note_cur<len){
+                            memmove(ns+note_cur,ns+note_cur+1,len-note_cur);
+                            save_defer();
+                        }
+                    } else if(sym==SDLK_LEFT){
+                        if(!shift&&has_sel){
+                            int a=note_sel0<note_cur?note_sel0:note_cur;
+                            note_cur=note_sel0=a;
+                        } else {
+                            int np=ctrl?(note_cur>0?(note_cur-1):0):note_cur>0?note_cur-1:0;
+                            if(ctrl){ while(np>0&&ns[np-1]!=' '&&ns[np-1]!='\n') np--; }
+                            note_cur=np; if(!shift) note_sel0=np;
+                        }
+                    } else if(sym==SDLK_RIGHT){
+                        if(!shift&&has_sel){
+                            int b=note_sel0>note_cur?note_sel0:note_cur;
+                            note_cur=note_sel0=b;
+                        } else {
+                            int np=note_cur<len?note_cur+1:len;
+                            if(ctrl){ np=note_cur; while(np<len&&ns[np]!=' '&&ns[np]!='\n') np++; while(np<len&&ns[np]==' ') np++; }
+                            note_cur=np; if(!shift) note_sel0=np;
+                        }
+                    } else if(sym==SDLK_HOME){
+                        /* go to start of line */
+                        int np=note_cur;
+                        while(np>0&&ns[np-1]!='\n') np--;
+                        note_cur=np; if(!shift) note_sel0=np;
+                    } else if(sym==SDLK_END){
+                        int np=note_cur;
+                        while(np<len&&ns[np]!='\n') np++;
+                        note_cur=np; if(!shift) note_sel0=np;
+                    } else if(sym==SDLK_RETURN||sym==SDLK_KP_ENTER){
+                        if(has_sel) NOTE_DEL_SEL();
+                        len=(int)strlen(ns);
+                        if(len<510){
+                            memmove(ns+note_cur+1,ns+note_cur,len-note_cur+1);
+                            ns[note_cur]='\n'; note_cur++; note_sel0=note_cur; save_defer();
+                        }
+                    } else if(ctrl&&sym==SDLK_a){
+                        note_sel0=0; note_cur=len; /* select all */
+                    } else if(ctrl&&sym==SDLK_c){
+                        if(has_sel){
+                            int a=note_sel0<note_cur?note_sel0:note_cur;
+                            int b=note_sel0<note_cur?note_cur:note_sel0;
+                            char tmp[512]={0}; int cl=b-a; if(cl>511)cl=511;
+                            memcpy(tmp,ns+a,cl); SDL_SetClipboardText(tmp);
+                        }
+                    } else if(ctrl&&sym==SDLK_x){
+                        if(has_sel){
+                            int a=note_sel0<note_cur?note_sel0:note_cur;
+                            int b=note_sel0<note_cur?note_cur:note_sel0;
+                            char tmp[512]={0}; int cl=b-a; if(cl>511)cl=511;
+                            memcpy(tmp,ns+a,cl); SDL_SetClipboardText(tmp);
+                            NOTE_DEL_SEL();
+                        }
+                    } else if(ctrl&&sym==SDLK_v){
+                        if(has_sel) NOTE_DEL_SEL();
+                        char *clip=SDL_GetClipboardText();
+                        if(clip&&*clip){
+                            len=(int)strlen(ns);
+                            int ins=(int)strlen(clip);
+                            if(len+ins<511){
+                                memmove(ns+note_cur+ins,ns+note_cur,len-note_cur+1);
+                                memcpy(ns+note_cur,clip,ins);
+                                note_cur+=ins; note_sel0=note_cur;
+                            }
+                            save_defer();
+                        }
+                        if(clip) SDL_free(clip);
+                    }
+                    #undef NOTE_DEL_SEL
+                    break;
+                }
+
                 if(s_on){
                     int len=(int)strlen(srch);
                     if(sym==SDLK_ESCAPE){
@@ -2672,7 +3517,7 @@ int main(int argc,char **argv){
                         if(clip) SDL_free(clip);
                     }
                 } else {
-                    if(sym==SDLK_ESCAPE){ sfx_click(); srch[0]=0; do_tab(0); }
+                    if(sym==SDLK_ESCAPE){ if(*srch||cur_tab!=T_ALL) sfx_click(); srch[0]=0; do_tab(0); }
                     if(sym==SDLK_LEFT||sym==SDLK_PAGEUP)  { int p=cur_page; go_page(cur_page-1); if(cur_page!=p) sfx_tab(); }
                     if(sym==SDLK_RIGHT||sym==SDLK_PAGEDOWN){ int p=cur_page; go_page(cur_page+1); if(cur_page!=p) sfx_tab(); }
                     if(sym==SDLK_f){ sfx_click(); srch_focus();
@@ -2694,7 +3539,25 @@ int main(int argc,char **argv){
             }
 
             case SDL_TEXTINPUT:
-                if(s_on){
+                if(note_open>=0){
+                    char *ns=db[note_open].notes;
+                    /* delete selection first */
+                    if(note_sel0!=note_cur){
+                        int a=note_sel0<note_cur?note_sel0:note_cur;
+                        int b=note_sel0<note_cur?note_cur:note_sel0;
+                        int len2=(int)strlen(ns);
+                        memmove(ns+a,ns+b,len2-b+1);
+                        note_cur=note_sel0=a;
+                    }
+                    int len=(int)strlen(ns);
+                    int ins=(int)strlen(ev.text.text);
+                    if(len+ins<511){
+                        memmove(ns+note_cur+ins,ns+note_cur,len-note_cur+1);
+                        memcpy(ns+note_cur,ev.text.text,ins);
+                        note_cur+=ins; note_sel0=note_cur;
+                    }
+                    sfx_type(); save_defer();
+                } else if(s_on){
                     srch_insert(ev.text.text);
                     sfx_type(); scr_tgt=0; scr_f=0; rebuild();
                 }
@@ -2702,7 +3565,7 @@ int main(int argc,char **argv){
             }
         }
 
-        if(needs_redraw || rz_drag || win_drag || drag_sb || srch_drag){
+        if(needs_redraw || rz_drag || win_drag || drag_sb || srch_drag || note_open>=0 || note_anim>0.005f){
             draw_background();
             draw_titlebar();
             draw_hdr();
@@ -2710,6 +3573,7 @@ int main(int argc,char **argv){
             draw_list();
             draw_sbar();
             draw_sort_dropdown();  /* drawn last — always on top of tabs/content */
+            draw_note_overlay();   /* overlay — above everything */
             SDL_RenderPresent(ren);
         }
     }

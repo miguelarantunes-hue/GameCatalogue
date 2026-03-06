@@ -1,0 +1,10 @@
+Medium impact, good for polish:
+
+Date fields — "Started" and "Finished" dates per game. Pairs well with a rating. Lets you see your gaming history over time.
+Custom game entry — Let users add games not in the 2500-game DB. A simple name + year dialog would cover the gap and remove a major limitation.
+Export to CSV — One-key export of your collection. Great for backups, sharing, or opening in Excel. Easy win since you're already managing the data structure.
+
+Longer term:
+
+Genre filter — If the DB already has genre data, a filter bar above the list would make browsing much nicer.
+Playtime tracking — Manual hour logging. Adds depth but also more UI complexity.
