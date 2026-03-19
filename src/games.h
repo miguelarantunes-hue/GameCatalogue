@@ -5,9 +5,10 @@
 #define GAMES_H
 
 typedef struct {
-    const char *n;   /* name  */
-    const char *g;   /* genre */
-    int         y;   /* year  */
+    const char *n;   /* name           */
+    const char *g;   /* primary genre  */
+    const char *g2;  /* secondary genre (NULL = none) */
+    int         y;   /* year           */
 } GE;
 
 extern const GE  GDB[];

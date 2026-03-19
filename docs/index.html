@@ -32,11 +32,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Game Catalogue — Track Every Game You've Ever Played</title>
-<link rel="icon" href="icon.ico" type="image/x-icon">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/dejavu-sans@1.0.0/dejavu-sans.min.css" rel="stylesheet">
+<link rel="icon" href__="icon.ico" type="image/x-icon">
+<link rel="preconnect" href__="https://fonts.googleapis.com">
+<link rel="preconnect" href__="https://fonts.gstatic.com" crossorigin>
+<link href__="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href__="https://cdn.jsdelivr.net/npm/dejavu-sans@1.0.0/dejavu-sans.min.css" rel="stylesheet">
 <style>
   /* DejaVu Sans — same font as the app */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -919,11 +919,11 @@
 <nav>
   <div class="nav-logo">GAME<span>CAT</span><span class="nav-beta">Beta</span></div>
   <div class="nav-links">
-    <a href="#features">Features</a>
-    <a href="#statuses">Statuses</a>
-    <a href="#download">Download</a>
-    <a href="#smartscreen">Security</a>
-    <a href="#license">License</a>
+    <a href__="#features">Features</a>
+    <a href__="#statuses">Statuses</a>
+    <a href__="#download">Download</a>
+    <a href__="#smartscreen">Security</a>
+    <a href__="#license">License</a>
   </div>
 </nav>
 
@@ -934,11 +934,11 @@
   <h1>YOUR GAME<br><em>CATALOGUE</em></h1>
   <p class="hero-sub">Track every game you've ever played, want to play, or abandoned at 3am. A blazing-fast desktop app built for serious gamers.</p>
   <div class="cta-group">
-    <a href="#download" class="btn-primary">
+    <a href__="#download" class="btn-primary">
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 21h18"/></svg>
       Download Free
     </a>
-    <a href="#features" class="btn-secondary">
+    <a href__="#features" class="btn-secondary">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
       See Features
     </a>
@@ -988,7 +988,7 @@
           </svg>
         </div>
       </div>
-      <!-- 8 theme colour dots — drawn on canvas exactly like the C code -->
+      <!-- 9 theme colour dots — drawn on canvas exactly like the C code -->
       <canvas id="dotCanvas" style="display:block;cursor:pointer;margin-left:10px"></canvas>
       <div class="win-wbtns">
         <!-- Min -->
@@ -1212,7 +1212,7 @@
        "Version 1.0 is here. Free forever. Just install and run."                          -->
   <p class="dl-sub">Public beta — bugs may exist and features may change. Free download, no account required.</p>
   <div class="cta-group" style="justify-content:center">
-    <a href="GameCatalogue-Setup-Latest.exe" class="btn-primary" download>
+    <a href__="GameCatalogue-Setup-Latest.exe" class="btn-primary" download>
       <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 21h18"/></svg>
       <!-- TUTORIAL — v1.0: change button text below from "Download Beta" to "Download v1.0" -->
       Download Beta
@@ -1246,7 +1246,7 @@
         built up enough download history. Game Catalogue has neither — it's a free, indie project.
         This warning does <strong>not</strong> mean the app is harmful.
         The full source code is publicly available on
-        <a href="https://github.com/miguelarantunes-hue/GameCatalogue" target="_blank" rel="noopener">GitHub</a>
+        <a href__="https://github.com/miguelarantunes-hue/GameCatalogue" target="_blank" rel="noopener">GitHub</a>
         for anyone to audit.
       </p>
 
@@ -1310,7 +1310,7 @@
 </section>
 
 <footer>
-  <p>Game Catalogue · Built with SDL2 · <a href="#download">Download</a> · Free &amp; Open</p>
+  <p>Game Catalogue · Built with SDL2 · <a href__="#download">Download</a> · Free &amp; Open</p>
 </footer>
 
 <div id="theme-toast"></div>
@@ -1403,6 +1403,7 @@ let sel_ring_if  = 0.0;              // float ring position, lerps to curTheme
 const tdot_bounce= new Float32Array(N); // per-dot bounce [0..1], decays
 const tdot_hov   = new Float32Array(N); // per-dot hover brightness
 let galaxy_dot_f = 0.0;              // 0..1 — animates in when Galaxy selected
+let orbitAngle   = 0.0;              // continuously rotating orbit angle for galaxy dot planets
 
 let rafId = null, prevTs = null;
 
@@ -1414,15 +1415,17 @@ const DOT_R  = 7;    // r2=7 in draw_titlebar_dots()
 const STEP   = 24;   // TDOT_STEP
 const PAD    = 6;    // vertical padding above/below dot
 
+// Extra canvas width so orbiting planets (max ~DOT_R+8 radius from centre of last dot) don't clip
+const ORBIT_CLIP = 10;
 const EDGE = DOT_R + 2;  // extra padding so ring on first/last dot isn't clipped
-const CW = (N-1)*STEP + DOT_R*2 + EDGE*2;
-const CH = DOT_R*2 + PAD*2;
+const CW = (N-1)*STEP + DOT_R*2 + EDGE*2 + ORBIT_CLIP;
+const CH = DOT_R*2 + PAD*2 + ORBIT_CLIP*2;
 canvas.width        = CW * DPR;
 canvas.height       = CH * DPR;
 canvas.style.width  = CW + 'px';
 canvas.style.height = CH + 'px';
 ctx.scale(DPR, DPR);
-const CY = PAD + DOT_R; // dot center y
+const CY = PAD + DOT_R + ORBIT_CLIP; // dot center y (shifted down by ORBIT_CLIP for planet room)
 
 // ── draw_titlebar_dots — direct port from main.c ──────────────────
 function drawDots() {
@@ -1452,43 +1455,96 @@ function drawDots() {
     const yoff = bn > 0 ? -Math.sin(bn * Math.PI) * 5 : 0;
     const dc = parseCol(THEMES[i].ac);
 
-    // Galaxy extra effects — drawn behind base dot, fully scaled by gf
-    if (i === N-1 && galaxy_dot_f > 0.15) {
+    // ── GALAXY DOT: star with orbiting planets ──
+    if (i === N-1 && galaxy_dot_f > 0.05) {
       const gf = galaxy_dot_f;
-      // outer nebula haze
-      const hr = DOT_R + 2 + Math.floor(gf * 4);
-      const grad = ctx.createRadialGradient(cx, CY+yoff, DOT_R, cx, CY+yoff, hr);
-      grad.addColorStop(0, `rgba(180,60,255,${gf*0.32})`);
-      grad.addColorStop(1, `rgba(180,60,255,0)`);
+
+      // Outer nebula haze
+      const hr = DOT_R + 3 + gf * 5;
+      const hazeGrad = ctx.createRadialGradient(cx, CY+yoff, DOT_R*0.5, cx, CY+yoff, hr);
+      hazeGrad.addColorStop(0, `rgba(200,80,255,${gf*0.45})`);
+      hazeGrad.addColorStop(0.5, `rgba(140,40,220,${gf*0.18})`);
+      hazeGrad.addColorStop(1, `rgba(100,20,200,0)`);
       ctx.beginPath();
       ctx.arc(cx, CY+yoff, hr, 0, Math.PI*2);
-      ctx.fillStyle = grad;
+      ctx.fillStyle = hazeGrad;
       ctx.fill();
-      // tight glow ring
-      ctx.beginPath();
-      ctx.arc(cx, CY+yoff, DOT_R+1, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(230,120,255,${gf*(110+hf*60)/255})`;
-      ctx.fill();
-      // diffraction spikes
-      const sd = DOT_R + 1 + Math.floor(gf * 3);
-      const spAlpha = gf * 0.9;
-      const drawSpike = (x1,y1,x2,y2,a) => {
-        ctx.strokeStyle = `rgba(255,210,255,${a})`;
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
-      };
-      drawSpike(cx, CY+yoff-DOT_R, cx, CY+yoff-sd, spAlpha);
-      drawSpike(cx, CY+yoff+DOT_R, cx, CY+yoff+sd, spAlpha);
-      drawSpike(cx-DOT_R, CY+yoff, cx-sd, CY+yoff, spAlpha);
-      drawSpike(cx+DOT_R, CY+yoff, cx+sd, CY+yoff, spAlpha);
-      // fade tips
-      drawSpike(cx, CY+yoff-sd, cx, CY+yoff-sd-1, spAlpha*0.45);
-      drawSpike(cx, CY+yoff+sd, cx, CY+yoff+sd+1, spAlpha*0.45);
-      drawSpike(cx-sd, CY+yoff, cx-sd-1, CY+yoff, spAlpha*0.45);
-      drawSpike(cx+sd, CY+yoff, cx+sd+1, CY+yoff, spAlpha*0.45);
-    }
 
-    // Base dot — always at DOT_R, same for every dot
+      // Bright star bloom glow
+      const bloomGrad = ctx.createRadialGradient(cx, CY+yoff, 0, cx, CY+yoff, DOT_R+5);
+      bloomGrad.addColorStop(0,   `rgba(255,230,255,${gf*0.9})`);
+      bloomGrad.addColorStop(0.4, `rgba(200,100,255,${gf*0.55})`);
+      bloomGrad.addColorStop(1,   `rgba(140,40,255,0)`);
+      ctx.beginPath();
+      ctx.arc(cx, CY+yoff, DOT_R+5, 0, Math.PI*2);
+      ctx.fillStyle = bloomGrad;
+      ctx.fill();
+
+      // 4-pointed diffraction spikes
+      const spLen = DOT_R + 2 + gf * 5;
+      const spAlpha = gf * 0.85;
+      ctx.save();
+      ctx.translate(cx, CY+yoff);
+      for (let spike = 0; spike < 4; spike++) {
+        const ang = (spike / 4) * Math.PI * 2;
+        const ex = Math.cos(ang) * spLen;
+        const ey = Math.sin(ang) * spLen;
+        const lg = ctx.createLinearGradient(0, 0, ex, ey);
+        lg.addColorStop(0,   `rgba(255,220,255,${spAlpha})`);
+        lg.addColorStop(0.6, `rgba(220,150,255,${spAlpha*0.5})`);
+        lg.addColorStop(1,   `rgba(180,80,255,0)`);
+        ctx.strokeStyle = lg;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // Planet definitions: { orbitR, size, color [r,g,b], speed, phase }
+      const planets = [
+        { orbitR: DOT_R + 4.5, size: 1.6, color: [100, 200, 255], speed: 1.0,  phase: 0 },
+        { orbitR: DOT_R + 4.5, size: 1.2, color: [255, 160, 80],  speed: 1.0,  phase: Math.PI },
+        { orbitR: DOT_R + 7.5, size: 1.4, color: [180, 255, 130], speed: 0.55, phase: Math.PI * 0.7 },
+      ];
+      const ELLIPSE_Y = 0.38; // flatten orbit to ellipse
+
+      // Orbit trail rings (faint ellipses, drawn first)
+      ctx.save();
+      ctx.translate(cx, CY+yoff);
+      ctx.scale(1, ELLIPSE_Y);
+      for (const p of planets) {
+        ctx.beginPath();
+        ctx.arc(0, 0, p.orbitR, 0, Math.PI*2);
+        ctx.strokeStyle = `rgba(180,100,255,${gf*0.14})`;
+        ctx.lineWidth = 0.7 / ELLIPSE_Y; // compensate for scale
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // Draw planets BEHIND the star (depth < 0.5 = sin < 0 = back half of orbit)
+      for (const p of planets) {
+        const angle = orbitAngle * p.speed + p.phase;
+        const sinA = Math.sin(angle);
+        const depth = (sinA + 1) * 0.5; // 0=far, 1=near
+        if (depth >= 0.5) continue;
+        const px = cx + Math.cos(angle) * p.orbitR;
+        const py = CY + yoff + sinA * p.orbitR * ELLIPSE_Y;
+        const planetAlpha = gf * (0.45 + depth * 0.3);
+        const [pr, pg, pb] = p.color;
+        const pg2 = ctx.createRadialGradient(px, py, 0, px, py, p.size * 2.5);
+        pg2.addColorStop(0, `rgba(${pr},${pg},${pb},${planetAlpha*0.7})`);
+        pg2.addColorStop(1, `rgba(${pr},${pg},${pb},0)`);
+        ctx.beginPath(); ctx.arc(px, py, p.size * 2.5, 0, Math.PI*2);
+        ctx.fillStyle = pg2; ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, p.size, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(${pr},${pg},${pb},${planetAlpha})`; ctx.fill();
+      }
+    }
+    // ── END GALAXY PRE-DRAW ──
+
+    // Base dot — always drawn for every dot
     if (hf > 0.02 && i !== curTheme) {
       ctx.beginPath();
       ctx.arc(cx, CY + yoff, DOT_R + 1, 0, Math.PI*2);
@@ -1510,6 +1566,35 @@ function drawDots() {
       ctx.fillStyle = `rgba(255,255,255,${wa/255})`;
       ctx.fill();
     }
+
+    // ── GALAXY DOT: draw planets IN FRONT of the star ──
+    if (i === N-1 && galaxy_dot_f > 0.05) {
+      const gf = galaxy_dot_f;
+      const ELLIPSE_Y = 0.38;
+      const planets = [
+        { orbitR: DOT_R + 4.5, size: 1.6, color: [100, 200, 255], speed: 1.0,  phase: 0 },
+        { orbitR: DOT_R + 4.5, size: 1.2, color: [255, 160, 80],  speed: 1.0,  phase: Math.PI },
+        { orbitR: DOT_R + 7.5, size: 1.4, color: [180, 255, 130], speed: 0.55, phase: Math.PI * 0.7 },
+      ];
+      for (const p of planets) {
+        const angle = orbitAngle * p.speed + p.phase;
+        const sinA = Math.sin(angle);
+        const depth = (sinA + 1) * 0.5;
+        if (depth < 0.5) continue;
+        const px = cx + Math.cos(angle) * p.orbitR;
+        const py = CY + yoff + sinA * p.orbitR * ELLIPSE_Y;
+        const planetAlpha = gf * (0.55 + depth * 0.45);
+        const [pr, pg, pb] = p.color;
+        const pg2 = ctx.createRadialGradient(px, py, 0, px, py, p.size * 2.5);
+        pg2.addColorStop(0, `rgba(${pr},${pg},${pb},${planetAlpha*0.7})`);
+        pg2.addColorStop(1, `rgba(${pr},${pg},${pb},0)`);
+        ctx.beginPath(); ctx.arc(px, py, p.size * 2.5, 0, Math.PI*2);
+        ctx.fillStyle = pg2; ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, p.size, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(${pr},${pg},${pb},${planetAlpha})`; ctx.fill();
+      }
+    }
+    // ── END GALAXY POST-DRAW ──
   }
 }
 
@@ -1529,7 +1614,6 @@ function dotIndexAt(clientX, clientY) {
 canvas.addEventListener('mousemove', e => {
   const hit = dotIndexAt(e.clientX, e.clientY);
   for (let i = 0; i < N; i++) {
-    // Settle toward 1 if hovered, 0 if not (smooth like main.c tdot_hov)
     tdot_hov[i] += ((i === hit ? 1 : 0) - tdot_hov[i]) * 0.18;
   }
   canvas.style.cursor = hit >= 0 ? 'pointer' : 'default';
@@ -1556,6 +1640,8 @@ function isSettled() {
   if (tc_t < 1.0) return false;
   if (Math.abs(sel_ring_if - curTheme) > 0.001) return false;
   if (Math.abs(galaxy_dot_f - (curTheme === N-1 ? 1 : 0)) > 0.001) return false;
+  // Keep running while galaxy is selected so planets keep orbiting
+  if (curTheme === N-1 && galaxy_dot_f > 0.05) return false;
   for (let i = 0; i < N; i++) {
     if (tdot_bounce[i] > 0.001) return false;
     if (tdot_hov[i] > 0.001) return false;
@@ -1594,12 +1680,16 @@ function tick(ts) {
     if (Math.abs(galaxy_dot_f - tgt) < 0.001) galaxy_dot_f = tgt;
   }
 
-  // 4. Redraw canvas every frame
+  // 5. Orbit rotation — always spinning when galaxy is active
+  if (galaxy_dot_f > 0.001) {
+    orbitAngle += dt * 1.8;
+  }
+
+  // 6. Redraw canvas every frame
   drawDots();
 
   if (isSettled()) {
     rafId = prevTs = null;
-    // Final draw at exact resting state
     sel_ring_if = curTheme;
     drawDots();
     return;
@@ -1642,14 +1732,12 @@ drawDots();
 
 // ── Galaxy background canvas ──────────────────────────────────────
 (function initGalaxyBg() {
+  (function initGalaxyBg() {
   const gc = document.getElementById('galaxy-bg');
   const gx = gc.getContext('2d');
-
-  function resize() {
-    gc.width  = window.innerWidth;
-    gc.height = window.innerHeight;
-    renderGalaxy();
-  }
+  let W, H;
+  let animId = null;
+  let t = 0;
 
   // Seeded PRNG — same LCG as main.c bg_init
   function lcg(seed) {
@@ -1657,77 +1745,221 @@ drawDots();
     return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0xffffffff; };
   }
 
-  function renderGalaxy() {
-    const W = gc.width, H = gc.height;
-    gx.clearRect(0, 0, W, H);
+  // Static star data — generated once
+  const MAX_STARS = 1400;
+  const stars = [];
 
+  function generateStars(w, h) {
+    stars.length = 0;
     const rng = lcg(0xDEADBEEF);
-
-    // ── 1. Stars ──
-    // ~900 stars across the canvas, mirroring the 1024×1024 texture in main.c
-    const starCount = Math.round((W * H) / 1100);
-    for (let i = 0; i < starCount; i++) {
-      const x    = rng() * W;
-      const y    = rng() * H;
+    const count = Math.round((w * h) / 900);
+    for (let i = 0; i < Math.min(count, MAX_STARS); i++) {
       const size = rng();
       const brightness = rng();
-
-      if (size < 0.72) {
-        // tiny 1px stars
-        const a = 0.25 + brightness * 0.55;
-        const b = Math.floor(200 + brightness * 55);
-        gx.fillStyle = `rgba(${b},${b},255,${a})`;
-        gx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
-      } else if (size < 0.92) {
-        // medium stars with soft glow
-        const a = 0.45 + brightness * 0.45;
-        const r = 0.8 + brightness * 0.7;
-        const grad = gx.createRadialGradient(x, y, 0, x, y, r * 2.5);
-        grad.addColorStop(0, `rgba(240,230,255,${a})`);
-        grad.addColorStop(1, `rgba(180,160,255,0)`);
-        gx.fillStyle = grad;
-        gx.beginPath(); gx.arc(x, y, r * 2.5, 0, Math.PI*2); gx.fill();
-        // solid centre
-        gx.fillStyle = `rgba(255,250,255,${a})`;
-        gx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
-      } else {
-        // bright stars — tiny cross diffraction spike
-        const a = 0.7 + brightness * 0.3;
-        const r = 1.0 + brightness * 0.8;
-        const grad = gx.createRadialGradient(x, y, 0, x, y, r * 4);
-        grad.addColorStop(0,   `rgba(255,245,255,${a})`);
-        grad.addColorStop(0.3, `rgba(220,200,255,${a*0.6})`);
-        grad.addColorStop(1,   `rgba(180,140,255,0)`);
-        gx.fillStyle = grad;
-        gx.beginPath(); gx.arc(x, y, r * 4, 0, Math.PI*2); gx.fill();
-        // diffraction lines
-        gx.strokeStyle = `rgba(255,240,255,${a * 0.5})`;
-        gx.lineWidth = 0.5;
-        const spike = r * 6;
-        gx.beginPath(); gx.moveTo(x - spike, y); gx.lineTo(x + spike, y); gx.stroke();
-        gx.beginPath(); gx.moveTo(x, y - spike); gx.lineTo(x, y + spike); gx.stroke();
-      }
+      stars.push({
+        x: rng() * w,
+        y: rng() * h,
+        size,
+        brightness,
+        twinkleSpeed: 0.4 + rng() * 2.2,
+        twinklePhase: rng() * Math.PI * 2,
+        twinkleAmp:   size > 0.92 ? 0.35 + rng() * 0.3 : size > 0.72 ? 0.1 + rng() * 0.15 : 0.05 + rng() * 0.08,
+      });
     }
+  }
 
-    // ── 2. Nebula clouds — painted as large soft radial gradients ──
+  // Shooting star state
+  const shooters = [];
+  let nextShooter = 2.5 + Math.random() * 3;
+
+  function spawnShooter() {
+    const angle = (-20 + Math.random() * 30) * Math.PI / 180; // mostly left→right, slight down
+    const speed = 180 + Math.random() * 260;
+    const len   = 60 + Math.random() * 100;
+    shooters.push({
+      x:     Math.random() * W * 1.2 - W * 0.1,
+      y:     Math.random() * H * 0.55,
+      vx:    Math.cos(angle) * speed,
+      vy:    Math.sin(angle) * speed,
+      len,
+      life:  1.0,
+      decay: 0.55 + Math.random() * 0.4,
+    });
+  }
+
+  // Nebula pulse state
+  let nebulaPulse = 0;
+
+  function renderFrame(dt) {
+    gx.clearRect(0, 0, W, H);
+
+    // ── 0. Deep space gradient base ──
+    const base = gx.createRadialGradient(W*0.5, H*0.4, 0, W*0.5, H*0.5, Math.max(W,H)*0.85);
+    base.addColorStop(0,   'rgba(18, 4, 40, 0.92)');
+    base.addColorStop(0.4, 'rgba(8,  2, 22, 0.85)');
+    base.addColorStop(1,   'rgba(2,  1,  8, 0.90)');
+    gx.fillStyle = base;
+    gx.fillRect(0, 0, W, H);
+
+    // ── 1. Animated nebula clouds ──
+    nebulaPulse += dt * 0.18;
+    const np = Math.sin(nebulaPulse);
+    const np2 = Math.sin(nebulaPulse * 0.7 + 1.2);
+
     const nebulae = [
-      // [cx_frac, cy_frac, r_frac, r, g, b, alpha]
-      [1.05, -0.10, 0.55, 120, 30, 200, 0.07],   // deep purple — top right
-      [-0.10, 1.05, 0.45, 200, 30, 140, 0.055],  // magenta — bottom left
-      [0.50,  0.50, 0.38,  40, 80, 200, 0.035],  // teal — centre
-      [0.50, -0.10, 0.30, 180, 80, 255, 0.030],  // accent violet — top centre
+      // [cx_frac, cy_frac, r_frac, r,g,b, baseAlpha, pulseAmp]
+      [1.05, -0.10, 0.60,  110,  25, 210, 0.090, 0.020, np],
+      [-0.10, 1.10, 0.55,  190,  25, 140, 0.072, 0.018, np2],
+      [0.52,  0.48, 0.42,   35,  70, 220, 0.048, 0.012, np],
+      [0.50, -0.05, 0.32,  170,  70, 255, 0.038, 0.010, np2],
+      [0.18,  0.65, 0.30,  255,  60, 160, 0.028, 0.008, np],
+      [0.82,  0.30, 0.28,   60, 120, 255, 0.030, 0.010, np2],
     ];
-    const base = Math.min(W, H);
-    for (const [fx, fy, fr, r, g, b, a] of nebulae) {
-      const cx = W * fx, cy = H * fy, rad = base * fr;
+    const minDim = Math.min(W, H);
+    for (const [fx, fy, fr, r, g, b, ba, pa, pulse] of nebulae) {
+      const cx = W * fx, cy = H * fy, rad = minDim * fr;
+      const a = ba + pa * pulse;
       const grad = gx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-      grad.addColorStop(0,   `rgba(${r},${g},${b},${a})`);
-      grad.addColorStop(0.5, `rgba(${r},${g},${b},${a*0.4})`);
+      grad.addColorStop(0,   `rgba(${r},${g},${b},${(a*1.6).toFixed(3)})`);
+      grad.addColorStop(0.4, `rgba(${r},${g},${b},${(a*0.7).toFixed(3)})`);
+      grad.addColorStop(0.75,`rgba(${r},${g},${b},${(a*0.2).toFixed(3)})`);
       grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
       gx.fillStyle = grad;
       gx.fillRect(0, 0, W, H);
     }
+
+    // ── 2. Milky-way-like diagonal band ──
+    {
+      const bx1 = -W * 0.1, by1 = H * 1.1;
+      const bx2 = W * 1.1,  by2 = -H * 0.05;
+      const band = gx.createLinearGradient(bx1, by1, bx2, by2);
+      band.addColorStop(0,    'rgba(80,40,160,0)');
+      band.addColorStop(0.35, 'rgba(80,40,160,0)');
+      band.addColorStop(0.46, `rgba(100,60,200,${0.04 + 0.012 * np})`);
+      band.addColorStop(0.50, `rgba(130,80,220,${0.07 + 0.018 * np})`);
+      band.addColorStop(0.54, `rgba(100,60,200,${0.04 + 0.012 * np})`);
+      band.addColorStop(0.65, 'rgba(80,40,160,0)');
+      band.addColorStop(1,    'rgba(80,40,160,0)');
+      gx.fillStyle = band;
+      gx.fillRect(0, 0, W, H);
+    }
+
+    // ── 3. Stars with twinkle ──
+    for (const s of stars) {
+      const twinkle = 1.0 + s.twinkleAmp * Math.sin(t * s.twinkleSpeed + s.twinklePhase);
+
+      if (s.size < 0.72) {
+        // Tiny pixel star
+        const a = (0.20 + s.brightness * 0.55) * twinkle;
+        const bv = Math.floor(190 + s.brightness * 65);
+        gx.fillStyle = `rgba(${bv},${bv},255,${Math.min(a,1).toFixed(3)})`;
+        gx.fillRect(Math.floor(s.x), Math.floor(s.y), 1, 1);
+      } else if (s.size < 0.92) {
+        // Medium star — soft glow
+        const a = (0.40 + s.brightness * 0.50) * twinkle;
+        const r = (0.7 + s.brightness * 0.8) * twinkle;
+        const grad = gx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3);
+        grad.addColorStop(0, `rgba(230,215,255,${Math.min(a,1).toFixed(3)})`);
+        grad.addColorStop(1, 'rgba(180,160,255,0)');
+        gx.fillStyle = grad;
+        gx.beginPath(); gx.arc(s.x, s.y, r * 3, 0, Math.PI*2); gx.fill();
+        gx.fillStyle = `rgba(255,248,255,${Math.min(a,1).toFixed(3)})`;
+        gx.fillRect(Math.floor(s.x), Math.floor(s.y), 1, 1);
+      } else {
+        // Bright star — glow + cross spikes
+        const a = (0.65 + s.brightness * 0.35) * twinkle;
+        const r = (0.9 + s.brightness * 0.9) * twinkle;
+        const grad = gx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 5);
+        grad.addColorStop(0,   `rgba(255,245,255,${Math.min(a,1).toFixed(3)})`);
+        grad.addColorStop(0.25,`rgba(220,195,255,${(a*0.65).toFixed(3)})`);
+        grad.addColorStop(0.6, `rgba(180,140,255,${(a*0.25).toFixed(3)})`);
+        grad.addColorStop(1,   'rgba(140,100,255,0)');
+        gx.fillStyle = grad;
+        gx.beginPath(); gx.arc(s.x, s.y, r * 5, 0, Math.PI*2); gx.fill();
+        // Cross spikes
+        const spike = r * 7 * twinkle;
+        const sa = (a * 0.55).toFixed(3);
+        gx.save();
+        gx.strokeStyle = `rgba(255,240,255,${sa})`;
+        gx.lineWidth = 0.6;
+        gx.beginPath(); gx.moveTo(s.x - spike, s.y); gx.lineTo(s.x + spike, s.y); gx.stroke();
+        gx.beginPath(); gx.moveTo(s.x, s.y - spike); gx.lineTo(s.x, s.y + spike); gx.stroke();
+        // Diagonal sub-spikes (softer)
+        const ds = spike * 0.45;
+        gx.strokeStyle = `rgba(220,200,255,${(a*0.28).toFixed(3)})`;
+        gx.beginPath(); gx.moveTo(s.x-ds,s.y-ds); gx.lineTo(s.x+ds,s.y+ds); gx.stroke();
+        gx.beginPath(); gx.moveTo(s.x+ds,s.y-ds); gx.lineTo(s.x-ds,s.y+ds); gx.stroke();
+        gx.restore();
+      }
+    }
+
+    // ── 4. Shooting stars ──
+    nextShooter -= dt;
+    if (nextShooter <= 0) {
+      spawnShooter();
+      nextShooter = 3 + Math.random() * 5;
+    }
+    for (let i = shooters.length - 1; i >= 0; i--) {
+      const sh = shooters[i];
+      sh.life -= dt * sh.decay;
+      if (sh.life <= 0) { shooters.splice(i, 1); continue; }
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+      const tx = sh.x - Math.cos(Math.atan2(sh.vy, sh.vx)) * sh.len;
+      const ty = sh.y - Math.sin(Math.atan2(sh.vy, sh.vx)) * sh.len;
+      const lg = gx.createLinearGradient(tx, ty, sh.x, sh.y);
+      lg.addColorStop(0, 'rgba(200,180,255,0)');
+      lg.addColorStop(0.6, `rgba(220,200,255,${(sh.life * 0.5).toFixed(3)})`);
+      lg.addColorStop(1,   `rgba(255,245,255,${(sh.life * 0.9).toFixed(3)})`);
+      gx.strokeStyle = lg;
+      gx.lineWidth = 1.4;
+      gx.beginPath(); gx.moveTo(tx, ty); gx.lineTo(sh.x, sh.y); gx.stroke();
+      // Head glow
+      const hg = gx.createRadialGradient(sh.x, sh.y, 0, sh.x, sh.y, 4);
+      hg.addColorStop(0, `rgba(255,250,255,${(sh.life*0.9).toFixed(3)})`);
+      hg.addColorStop(1, 'rgba(200,180,255,0)');
+      gx.fillStyle = hg;
+      gx.beginPath(); gx.arc(sh.x, sh.y, 4, 0, Math.PI*2); gx.fill();
+    }
   }
+
+  let prevTime = null;
+  function loop(ts) {
+    if (!document.body.classList.contains('theme-galaxy')) {
+      animId = null; prevTime = null; return;
+    }
+    const dt = prevTime === null ? 0 : Math.min((ts - prevTime) / 1000, 0.1);
+    prevTime = ts;
+    t += dt;
+    renderFrame(dt);
+    animId = requestAnimationFrame(loop);
+  }
+
+  function startLoop() {
+    if (!animId) { prevTime = null; animId = requestAnimationFrame(loop); }
+  }
+  function stopLoop() {
+    if (animId) { cancelAnimationFrame(animId); animId = null; }
+    gx.clearRect(0, 0, W, H);
+  }
+
+  // Watch for galaxy theme toggling
+  const observer = new MutationObserver(() => {
+    if (document.body.classList.contains('theme-galaxy')) startLoop();
+    else stopLoop();
+  });
+  observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  function resize() {
+    W = gc.width  = window.innerWidth;
+    H = gc.height = window.innerHeight;
+    generateStars(W, H);
+    if (document.body.classList.contains('theme-galaxy')) renderFrame(0);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
 
   window.addEventListener('resize', resize);
   resize();
@@ -1735,4 +1967,4 @@ drawDots();
 
 </script>
 
-</body>
+</body></html>

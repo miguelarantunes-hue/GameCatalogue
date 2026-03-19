@@ -27,10 +27,20 @@ gcc %FLAGS% -c src\themes.c -o build\themes.o %INC%
 if errorlevel 1 ( echo ERROR: themes.c failed & pause & exit /b 1 )
 gcc %FLAGS% -c src\games.c  -o build\games.o  %INC%
 if errorlevel 1 ( echo ERROR: games.c failed  & pause & exit /b 1 )
+gcc %FLAGS% -c src\save.c   -o build\save.o   %INC%
+if errorlevel 1 ( echo ERROR: save.c failed   & pause & exit /b 1 )
+gcc %FLAGS% -c src\audio.c  -o build\audio.o  %INC%
+if errorlevel 1 ( echo ERROR: audio.c failed  & pause & exit /b 1 )
+gcc %FLAGS% -c src\search.c -o build\search.o %INC%
+if errorlevel 1 ( echo ERROR: search.c failed & pause & exit /b 1 )
 
 :: ── Link ──────────────────────────────────────────────────────────
 echo [3/3] Linking...
-gcc %FLAGS% -o "Game Catalogue.exe" build\main.o build\themes.o build\games.o build\app_res.o %LIB% %LIBS%
+gcc %FLAGS% -o "Game Catalogue.exe" ^
+    build\main.o build\themes.o build\games.o ^
+    build\save.o build\audio.o  build\search.o ^
+    build\app_res.o ^
+    %LIB% %LIBS%
 if errorlevel 1 ( echo ERROR: link failed & pause & exit /b 1 )
 
 echo.
