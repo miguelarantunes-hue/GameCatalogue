@@ -1,10 +1,93 @@
-Medium impact, good for polish:
+## 🗂️ Layout & Structure
 
-Date fields — "Started" and "Finished" dates per game. Pairs well with a rating. Lets you see your gaming history over time.
-Custom game entry — Let users add games not in the 2500-game DB. A simple name + year dialog would cover the gap and remove a major limitation.
-Export to CSV — One-key export of your collection. Great for backups, sharing, or opening in Excel. Easy win since you're already managing the data structure.
+**Split the toolbar into two rows.** Right now Sort, Genre, Theme, View Toggle, and Stats are all crammed into `HDR_H` with 20px gaps between them. At narrow widths this collapses badly. Split into: a top row with the Search bar + Theme + Stats, and a bottom row with Sort + Genre filter + View toggle. This alone makes the header feel breathable.
 
-Longer term:
+**Left sidebar instead of tab bar.** You have 8 tabs (`N_TABS = 8`) rendering as `(win_w - 8 - 7×2) / 8`, which at the 700px minimum width gives only ~85px per tab — barely enough for "Favourites". A fixed 160px left sidebar listing All / Wishlist / Playing / Finished / etc. with a live game count badge per category would be far more scalable and look like a proper desktop app. The main content area would gain full width.
 
-Genre filter — If the DB already has genre data, a filter bar above the list would make browsing much nicer.
-Playtime tracking — Manual hour logging. Adds depth but also more UI complexity.
+---
+
+## 🎨 Visual Consistency
+
+**Unify button variants to exactly two shapes.** Currently you have 5+ different button sizes: sort pill (68px), genre btn (52px), theme btn (42px), view buttons (32px), notes btn, status badge (96px). Define just two variants — icon-only (32×26) and icon+label (variable, min 52px) — both sharing the same border radius, border color logic, and hover tint. Everything becomes predictable.
+
+**Disciplined border-radius use.** Your R_SM/R_MD/R_LG system is good but inconsistently applied. Proposal: interactive buttons → `R_SM (5)`, cards and panels → `R_LG (10)`, status badges and search bar → fully rounded (`height/2`). Tabs specifically should use `R_MD` only on the top two corners (flat bottom), which is the conventional tab shape.
+
+**Status color left-border on list rows.** Each status has a distinct accent color visible in the badge popup, but list rows just alternate ROWA/ROWB — the status is only readable by looking at the small badge on the far right. Add a 3px vertical bar on the left edge of each row in the status accent color. At a glance you'd immediately see "this block of purple is Wishlist, this block of green is Playing." This is the pattern Letterboxd and Backloggd use.
+
+**Column header strip.** `COL_HDR_H = 22` is too thin and visually merges with the tabs above it. Bump to 28px, uppercase the labels at f12 with slightly increased letter-spacing, and add a 1px separator below. This makes it read clearly as a table header rather than a floating label.
+
+---
+
+## 🃏 Grid View
+
+**Taller cards with a cover placeholder zone.** `GRID_H = 158` is tight. Increase to ~195px and reserve the top ~80px as a "cover art" zone — fill it with a solid color derived from the genre (each genre gets a unique palette color) plus a centered genre icon character. This transforms the grid from a text list with columns into something that actually feels like a games library.
+
+**One status badge per card, not 7 tiny buttons.** The grid currently shows 7 inline `GBSZ = 22` buttons per card. This is visually noisy. Use a single status badge pill at the card's bottom-right corner (matching the list view badge) that opens the same popup on click. Consistent behavior across both views, and much cleaner cards.
+
+---
+
+## 🔍 Search & Filtering
+
+**Inline keyboard shortcut hint.** When the search bar is unfocused and empty, render `Ctrl+F` in a faint pill on the right side of the search box. You already support this shortcut — surfacing it is a QoL improvement.
+
+**"Clear all" button on the chip band.** The `chip_band` only appears when genre/year filters are active. Add an `✕ Clear` button at the right end of the chip row. Currently the only way to clear all filters is pressing Escape, which isn't discoverable.
+
+**Year range instead of single year.** `filt_year` is a single integer. A "before/after year" pair (e.g., Released: 2015–2023) would be far more useful for browsing. Even just two text inputs in the genre dropdown panel would be a big upgrade.
+
+---
+
+## 📊 Empty States & Stats
+
+**Empty state screens per tab.** When a status tab has 0 games, show a centered icon (e.g., ★ for Favourites, 🎮 for All) with a short prompt: *"Nothing here yet — add a game with the + button."* Right now an empty tab likely just shows a blank list area, which feels broken.
+
+**Visual stats panel.** The stats button exists but if the panel is just text counts, consider rendering the status distribution as a simple horizontal stacked bar using SDL filled rects — each segment in its status accent color, proportional to count. Much more compelling than "Wishlist: 12, Playing: 3…"
+
+---
+
+## 🌞 Light Theme
+
+**Add at least one light theme.** All 9 current themes are dark. A "Paper" or "Daylight" theme with a warm off-white background (~`{238,234,226}`), near-black text, and a warm accent would cover accessibility concerns and round out the theme picker. The theme system is already fully in place — it's just a matter of adding a new entry to `THEMES[]` in `themes.c`.
+
+---
+
+The highest-impact, lowest-effort changes in order would be: **status color left-border on rows → unified button variants → empty state screens → column header height → search keyboard hint**. The sidebar navigation and grid card redesign are bigger but would make the biggest visual leap.
+
+______________________________________________________________________________________________________________________________________________________________________
+
+
+### Phase 1 — Quick Wins (1–2 hours each, isolated changes)
+1. **Status color left-border on list rows** — a few lines in `draw_list()`, massive visual clarity boost
+2. **Column header height** — bump `COL_HDR_H` from 22→28, uppercase labels, add separator
+3. **Search bar keyboard shortcut hint** — render faint `Ctrl+F` pill when unfocused and empty
+4. **"Clear all" on chip band** — one extra button in `draw_chips()`, already know where Escape clears
+
+---
+
+### Phase 2 — Consistency Pass (a few hours, touches shared systems)
+5. **Unify button variants** — define the two shapes and apply consistently across Sort/Genre/Theme/View buttons
+6. **Disciplined border-radius** — audit all `bfrr_aa()` calls and align to the R_SM/R_MD/fully-round rules
+7. **Tab flat-bottom corners** — small change to how tabs draw their rounded corners
+
+---
+
+### Phase 3 — Content & Feedback (moderate effort)
+8. **Empty state screens per tab** — one new draw function, called when filtered list is empty
+9. **Visual stats panel** — replace or augment the existing stats button popup with a stacked bar
+10. **Light "Paper" theme** — add one new entry to `THEMES[]` in `themes.c`, zero structural work
+
+---
+
+### Phase 4 — Grid View Overhaul (significant, self-contained)
+11. **Single status badge per grid card** — replace the 7 tiny buttons with the same badge+popup from list view
+12. **Cover placeholder zone with genre color** — taller cards, genre-colored top band, centered genre text
+
+---
+
+### Phase 5 — Layout Architecture (biggest changes, do last)
+13. **Year range filter** — add `filt_year_to` alongside `filt_year`, update the filter UI and `rebuild()`
+14. **Split toolbar into two rows** — touches `HDR_H`, all `HDR_Y`-relative positioning, and `LST_Y`
+15. **Left sidebar navigation** — replaces the tab bar entirely, requires the most layout refactoring
+
+---
+
+Do Phase 1 first — those four changes alone will make the app feel noticeably more polished and you'll build momentum. Phase 5 is worth planning carefully since changing `HDR_H` and `LST_Y` cascades through nearly every layout constant in `main.c`.

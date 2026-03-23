@@ -22,6 +22,9 @@
 #define S_FAV      5
 #define S_ROTATION 6
 
+/* ── Layout constants (shared with search.c) ─────────────────── */
+#define CHIP_H       26   /* filter-chip row height                  */
+
 /* ── Database constants ───────────────────────────────────────── */
 #define MAX_G        2500
 #define SAVEFILE_NAME "catalogue_save.bin"

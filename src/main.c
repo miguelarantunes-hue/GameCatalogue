@@ -14,7 +14,7 @@
  *    gcc -O2 -o gamelist.exe main.c themes.c games.c   \
  *        -I"C:/SDL2/include" -I"C:/SDL2/include/SDL2"  \
  *        -L"C:/SDL2/lib"                               \
- *        -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf        \
+ *        -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -ldwmapi \
  *        -mwindows
  *
  *  BUILD (Linux/macOS):
@@ -31,9 +31,6 @@
 #include <ctype.h>
 #include <math.h>
 #include <limits.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 #include "games.h"
 #include "themes.h"
 #include "state.h"
@@ -41,10 +38,17 @@
 #include "audio.h"
 #include "search.h"
 
+
+
 #ifdef _WIN32
   #include <SDL2/SDL_syswm.h>
   #include <windows.h>
+  #include <windowsx.h>   /* GET_X_LPARAM / GET_Y_LPARAM */
+  #include <dwmapi.h>     /* DwmExtendFrameIntoClientArea */
   #define WIN_RGN_R 8
+#ifndef SM_CXPADDEDBORDER
+  #define SM_CXPADDEDBORDER 92  /* defined in Vista+ SDK; value is constant */
+#endif
 #endif
 
 /* ── Window state ─────────────────────────────────────────────── */
@@ -128,10 +132,8 @@ int win_h = 860;
 #define GRID_W   180
 #define GRID_H   158   /* enough for 2-line name + info + gap + buttons */
 #define GRID_GAP     10
-#define GRID_TOP_PAD 12   /* extra space between tabs and first grid row */
 #define LIST_TOP_PAD  6   /* matches the row vertical inset (ay+3) */
-#define GBSZ      22   /* grid card status button size */
-#define GBGP       2   /* grid card status button gap  */
+#define GBSZ      22   /* grid card status chip height — drives both draw and hit-test */
 
 /* ── Titlebar controls (legacy — kept for DD_ITEM_H / DD_BTN_H) ─── */
 #define TC_Y   6
@@ -147,7 +149,6 @@ int win_h = 860;
    any residual hover-settle code compiles without errors.              */
 #define GENRE_BTN_X_ (TC_X0+DD_BTN_W+20)
 #define GENRE_BTN_W  52
-#define GENRE_DD_W   170
 #define GENRE_DD_ITEM_H 22
 #define TD_BTN_X_    (GENRE_BTN_X_+GENRE_BTN_W+20)
 #define VIEW_X0_     (TD_BTN_X_+TD_BTN_W+20)
@@ -171,6 +172,7 @@ int win_h = 860;
 #define CMD_VIEW_PW   80         /* List / Grid pill width              */
 #define CMD_STATS_PW  112         /* Stats pill width — wide enough for icon + label */
 #define CMD_GENRE_BTN_W 130
+#define GENRE_DD_W      170  /* genre filter dropdown width */
 /* Section row y-start helpers — 4 rows: Sort / Display / Genre / Theme */
 #define CMD_SORT_RY    (CMD_PANEL_OY + CMD_PAD)
 #define CMD_DISPLAY_RY (CMD_SORT_RY    + CMD_SEC_H)
@@ -212,10 +214,11 @@ static const int SPRIO[N_STATUS] = {
 static const int TAB_ORDER[N_TABS] = {
     T_ALL, T_FAV, T_PLAYING, T_FINISHED, T_PLAYED, T_ROTATION, T_WISH, T_DROPPED
 };
-/* Returns display position (0..N_TABS-1) for a given tab id */
+/* Returns display position (0..N_TABS-1) for a given tab id.
+   T_STATS has no display slot — returns -1 so callers can skip the pill update. */
 static int tab_disp(int tab){
     for(int i=0;i<N_TABS;i++) if(TAB_ORDER[i]==tab) return i;
-    return 0;
+    return -1; /* T_STATS or unknown — no pill slot */
 }
 
 /* ═══════════════════════ Globals ═══════════════════════════════ */
@@ -238,6 +241,10 @@ static Uint32 srch_dbl_t = 0;     /* last click time for dbl-click   */
 static int   srch_dbl_p  = -1;    /* last click char pos             */
 static int   hsb=0, drag_sb=0, drag_sy=0, drag_sscr=0;
 static int   win_maximized=0;
+#ifdef _WIN32
+static WNDPROC          g_orig_wndproc  = NULL;
+static volatile int     win_snap_max_req = 0; /* set in WndProc, consumed in game loop */
+#endif
 static int   pre_max_x=0, pre_max_y=0, pre_max_w=1280, pre_max_h=860;
 static int   win_drag=0, win_drag_ox=0, win_drag_oy=0;
 static RzDir rz_active=RZ_NONE;
@@ -264,6 +271,7 @@ int   n_filt_genres = 0;        /* number of active genre filters          */
 int   filt_year     = 0;        /* 0 = inactive                      */
 static float chip_genre_hov= 0.f;
 static float chip_year_hov = 0.f;
+static float chip_clear_hov= 0.f;   /* "Clear all" button hover (animated in anim_tick) */
 static float sort_ind_f = 0.f;   /* sliding pill – index space */
 static float view_ind_f = 0.f;   /* sliding pill – view mode   */
 /* ── Notes overlay ──────────────────────────────────────────────── */
@@ -312,6 +320,7 @@ static float badge_item_hov[N_STATUS]; /* per-item hover inside popup       */
 static int   badge_grid_bx  = 0;       /* grid badge pill anchor x          */
 static int   badge_grid_by  = 0;       /* grid badge pill anchor y          */
 static ViewMode badge_open_vm = VIEW_LIST; /* which view mode opened the popup */
+static int   badge_opens_above = 0;         /* 1 = popup opens upward, set when opened */
 /* Close: clear open state but keep ri/last_gi alive for the close animation */
 #define BADGE_CLOSE()      do{ badge_open_gi=-1; }while(0)
 /* Instant close — skips fade-out animation; use on context changes (view switch, tab change, page) */
@@ -607,6 +616,9 @@ static void apply_rgn(int w,int h,int rounded){
     SDL_SysWMinfo info; SDL_VERSION(&info.version);
     if(!SDL_GetWindowWMInfo(win,&info)) return;
     HWND hwnd=info.info.win.window;
+    /* WM_WINDOWPOSCHANGED in snap_wndproc handles snap/maximized detection
+       and overrides this on every resize — apply_rgn just sets the initial
+       state and handles our own maximize button which doesn't go via WndProc. */
     if(rounded){ int d=WIN_RGN_R*2; HRGN rgn=CreateRoundRectRgn(0,0,w+1,h+1,d,d); SetWindowRgn(hwnd,rgn,TRUE); }
     else SetWindowRgn(hwnd,NULL,TRUE);
 }
@@ -658,12 +670,37 @@ static void do_rz_move(void){
     SDL_SetWindowPosition(win,nx,ny);
     SDL_SetWindowSize(win,nw,nh);
     win_w=nw; win_h=nh;
-    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));}
+    { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } }
     apply_rgn(win_w,win_h,1);
 }
 
 /* ═══════════════════════ Maximize ══════════════════════════════ */
 static void toggle_maximize(void){
+#ifdef _WIN32
+    {
+        SDL_SysWMinfo _wi; SDL_VERSION(&_wi.version);
+        if(SDL_GetWindowWMInfo(win, &_wi)){
+            HWND hwnd = _wi.info.win.window;
+            if(win_maximized){
+                win_maximized = 0;
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                /* Save geometry before ShowWindow expands the rect */
+                RECT wr; GetWindowRect(hwnd, &wr);
+                pre_max_x = wr.left;  pre_max_y = wr.top;
+                pre_max_w = wr.right  - wr.left;
+                pre_max_h = wr.bottom - wr.top;
+                /* Set win_maximized=1 before ShowWindow so WM_WINDOWPOSCHANGED
+                   applies the correct (no-region) state */
+                win_maximized = 1;
+                ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+            { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } }
+            return;
+        }
+    }
+#endif
+    /* Fallback (Linux / macOS) */
     if(win_maximized){
         SDL_SetWindowPosition(win,pre_max_x,pre_max_y);
         SDL_SetWindowSize(win,pre_max_w,pre_max_h);
@@ -682,7 +719,7 @@ static void toggle_maximize(void){
         win_maximized=1;
         apply_rgn(win_w,win_h,0);
     }
-    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));}
+    { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } }
     rebuild();
 }
 
@@ -799,7 +836,7 @@ static int anim_tick(void){
     /* ── Tab pill ── */
     {
         float slide=clampf(dt_*30.f,0.f,1.f);
-        if(cur_tab<N_TABS) tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));
+        { int _td=tab_disp((int)cur_tab); if(_td>=0) tab_itx=(float)TAB_X_(_td); }
         if(rz_drag||win_drag){ tab_ix=tab_itx; }
         else { SETTLE(tab_ix,tab_itx,slide); }
         SETTLE(sort_ind_f,(float)sort_mode,slide);
@@ -993,10 +1030,9 @@ static int anim_tick(void){
                     int row2=local3/cols,col2=local3%cols;
                     int cx2=ox+col2*(GRID_W+GRID_GAP);
                     int cy2=oy4+row2*(GRID_H+GRID_GAP);
-                    /* Match draw_grid_card: chip_h=24, chip_y = cy2+GRID_H-24-6 */
-                    int gbh = 24, gby = cy2 + GRID_H - gbh - 6;
-                    int gbx = cx2 + 8, gbw = GRID_W - 16;
-                    if(mx2>=gbx&&mx2<gbx+gbw&&my2>=gby&&my2<gby+gbh)
+                    int gbx=cx2+(GRID_W-BADGE_W)/2;
+                    int gby=cy2+GRID_H-GBSZ-5;
+                    if(mx2>=gbx&&mx2<gbx+BADGE_W&&my2>=gby&&my2<gby+GBSZ)
                         hov_gi=hov_db;
                     break;
                 }
@@ -1069,6 +1105,17 @@ static int anim_tick(void){
                 float tgt_y = (my_c>=chip_y&&my_c<chip_y+ih_c&&mx_c>=ccx&&mx_c<ccx+cw) ? 1.f:0.f;
                 SETTLE(chip_year_hov,tgt_y,cspd);
                 if(fabsf(chip_year_hov-tgt_y)>0.001f) busy=1;
+                ccx += cw + 6;
+            }
+            /* "Clear all" hover — only active when 2+ filters, else decay to 0 */
+            if((n_filt_genres>0)+(filt_year!=0) > 1){
+                const char *clbl_c = "Clear all";
+                int cw_cl = txw_(f12,clbl_c) + 16;
+                float tgt_cl = (my_c>=chip_y&&my_c<chip_y+ih_c&&mx_c>=ccx&&mx_c<ccx+cw_cl)?1.f:0.f;
+                SETTLE(chip_clear_hov,tgt_cl,cspd);
+                if(fabsf(chip_clear_hov-tgt_cl)>0.001f) busy=1;
+            } else {
+                SETTLE(chip_clear_hov,0.f,cspd);
             }
         }
         { float dd_tgt = (badge_open_gi>=0) ? 1.f : 0.f;
@@ -1843,9 +1890,9 @@ static void draw_hdr(void){
             } else {
                 rtxclip(f14,"Search games...",tx_off,ty2,tx_mw,C_DIM);
             }
-            /* keyboard shortcut hint pill — "Ctrl+F" faintly on the right of the bar */
+            /* keyboard shortcut hint pill — press F to focus search */
             { int fh_=TTF_FontHeight(f12);
-              const char *hint_ = "Ctrl+F";
+              const char *hint_ = "F";
               int pw_=txw_(f12,hint_)+10, ph_=fh_+4;
               int px_=sr_x+sr_w-pw_-8, py_=SR_Y+(SR_H-ph_)/2;
               C4 pbg_={C_SEP.r,C_SEP.g,C_SEP.b,45};
@@ -2461,25 +2508,13 @@ static void draw_chips(void){
 
     /* ── "Clear all" button — only when more than one filter is active ── */
     if((n_filt_genres>0) + (filt_year!=0) > 1){
-        static float clear_hov = 0.f;
-        {   /* hover update */
-            int mx_cl,my_cl; SDL_GetMouseState(&mx_cl,&my_cl);
-            float cspd_cl = 1.f-powf(0.001f,dt_);
-            const char *clbl = "Clear all";
-            int clw = txw_(f12,clbl);
-            int cw_cl = clw + 16;
-            int tgt_cl = (my_cl>=iy&&my_cl<iy+ih&&mx_cl>=cx&&mx_cl<cx+cw_cl)?1:0;
-            float diff = (float)tgt_cl - clear_hov;
-            if(fabsf(diff)<0.001f) clear_hov=(float)tgt_cl;
-            else clear_hov += diff*cspd_cl;
-        }
         const char *clbl = "Clear all";
         int clw  = txw_(f12,clbl);
         int cw_cl = clw + 16;
-        C4 cbg  = lerpc(C_BTNI, MK4(180,50,50,255), 0.10f + clear_hov*0.15f); cbg.a=255;
-        C4 cbrd = lerpc(C_SEP,  MK4(220,80,80,255), 0.40f + clear_hov*0.45f); cbrd.a=200;
+        C4 cbg  = lerpc(C_BTNI, MK4(180,50,50,255), 0.10f + chip_clear_hov*0.15f); cbg.a=255;
+        C4 cbrd = lerpc(C_SEP,  MK4(220,80,80,255), 0.40f + chip_clear_hov*0.45f); cbrd.a=200;
         bfrr_aa(cx, iy, cw_cl, ih, R_MD, 1, cbrd, cbg);
-        C4 ctc  = lerpc(C_SUB, MK4(255,130,130,255), 0.30f + clear_hov*0.70f);
+        C4 ctc  = lerpc(C_SUB, MK4(255,130,130,255), 0.30f + chip_clear_hov*0.70f);
         rtxcen(f12, clbl, cx, iy, cw_cl, ih, ctc);
     }
 
@@ -2629,10 +2664,10 @@ static int badge_popup_pos(int *px_out, int *py_out){
         int col2    = local2 % cols2, row2 = local2 / cols2;
         int gcx2    = ox2 + col2*(GRID_W+GRID_GAP);
         int gcy2    = oy2 + row2*(GRID_H+GRID_GAP);
-        /* chip_h=24, chip_y = gcy2 + GRID_H - 24 - 6 */
-        int badge_y2  = gcy2 + GRID_H - 24 - 6;
+        int badge_y2  = gcy2 + GRID_H - GBSZ - 5;  /* matches draw: chip_y = y+GRID_H-GBSZ-5 */
+        int bw2       = GRID_W - 12;   /* max chip width */
         badge_by2     = badge_y2;
-        px = gcx2 + GRID_W/2 - BPOP_W/2;
+        px = gcx2 + 6 + bw2/2 - BPOP_W/2;
     } else {
         if(badge_open_ri < page_first() || badge_open_ri > page_last()) return 0;
         int ri_local = badge_open_ri - page_first();
@@ -2642,10 +2677,11 @@ static int badge_popup_pos(int *px_out, int *py_out){
     }
     if(px < 4) px = 4;
     if(px + BPOP_W > win_w - 4) px = win_w - 4 - BPOP_W;
-    int badge_bh = (view_mode==VIEW_GRID) ? 24 : BADGE_H;
-    int py = badge_by2 + badge_bh + 2;
-    if(py + BPOP_H > win_h - SB_H - PG_H)
-        py = badge_by2 - BPOP_H - 2;
+    int badge_bh = (view_mode==VIEW_GRID) ? GBSZ : BADGE_H;
+    int py_below = badge_by2 + badge_bh + 4;
+    int py_above = badge_by2 - BPOP_H - 4;
+    /* Default: open downward. Only flip upward when the popup would be clipped below. */
+    int py = (py_below + BPOP_H <= win_h - SB_H - PG_H) ? py_below : py_above;
     *px_out = px; *py_out = py;
     return 1;
 }
@@ -2665,11 +2701,9 @@ static void draw_badge_popup(void){
     int visible_h = (int)(total_h * a);
     if(visible_h < 2) return;
 
-    /* Detect above/below: if popup top is above the badge, animation opens upward */
-    int anchor_y = (view_mode==VIEW_GRID) ? badge_grid_by
-                 : (badge_open_ri>=0 ? LST_DATA_Y+LIST_TOP_PAD+(badge_open_ri-page_first())*ROW_H+BADGE_YO : py+total_h);
-    int opens_above = (py < anchor_y);
-    /* Clip from anchor end: below=top-pinned, above=bottom-pinned */
+    /* Use the direction that was decided when the popup opened — never recompute mid-animation */
+    int opens_above = badge_opens_above;
+    /* Clip from the chip end outward: downward = top-pinned, upward = bottom-pinned */
     int clip_y = opens_above ? (py + total_h - visible_h) : py;
     SDL_Rect clip = {px-2, clip_y, BPOP_W+4, visible_h+2};
     SDL_RenderSetClipRect(ren, &clip);
@@ -2783,7 +2817,7 @@ static void draw_row(int ri, int ay){
                 if(vw>0){
                     C4 hlbg=C_ACC; hlbg.a=55;
                     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-                    SDL_Rect hr={nx,ay+4,vw+2,ROW_H-8};
+                    SDL_Rect hr={nx,name_y-1,vw+2,fh18+2};
                     sc_(hlbg); SDL_RenderFillRect(ren,&hr);
                     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
                     C4 hl=tintc(C_ACC,1.8f); hl.a=255;
@@ -2932,48 +2966,59 @@ static void ellipsis(TTF_Font *f, const char *s, int px_max, char *buf, int bufs
 static void draw_grid_card(int ri, int x, int y){
     int gi=flt[ri]; Game *g=&db[gi];
     float ht=row_ht[gi];
-    int prim   = primary_status(g);
-    C4 id_col  = (prim>=0) ? SCOL[prim] : C_ACC;
+    int prim = primary_status(g);
+    C4 id_col = (prim>=0) ? SCOL[prim] : C_ACC;
 
     int fh12 = TTF_FontHeight(f12);
     int fh14 = TTF_FontHeight(f14);
     int tw2  = GRID_W - 24;
 
-    int div_y  = y + 96;
-    int meta_y = div_y + 8;
-    int chip_h = 24;
-    int chip_y = y + GRID_H - chip_h - 6;
+    /* ── Hit-test anchors — must match click handler exactly ─── */
+    int chip_y = y + GRID_H - GBSZ - 5;   /* = y+131 */
+    int chip_h = GBSZ;
+    int meta_y = y + 102;                  /* genre·year row */
 
-    /* ── 1. CARD SHELL ──────────────────────────────────────────── */
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+    /* ── 1. CARD SHELL ─────────────────────────────────────────
+       Galaxy: very translucent dark-glass so stars show through.
+       Other themes: opaque card using theme background color.    */
     {
-        C4 fill, brd;
-        if(cur_theme == 8){
-            fill   = lerpc(C_BG, id_col, 0.08f);
-            fill.a = (Uint8)(55 + (int)(ht * 55));
-            brd    = id_col; brd.a = (Uint8)(110 + (int)(ht * 100));
-        } else {
-            /* Stay very close to BG — just barely lifted above it */
-            fill = lerpc(C_BG, C_TBAR, 0.6f + ht * 0.25f);
-            brd  = lerpc(C_SEP, id_col, ht * 0.55f);
-            brd.a = (Uint8)(70 + (int)(ht * 140));
-        }
+        C4 fill = C_TBAR;
+        fill.a = (cur_theme == 8)
+                 ? (Uint8)(42 + (int)(ht * 26))   /* 42..68: stars clearly visible */
+                 : (Uint8)(210 + (int)(ht * 30));  /* 210..240: solid card */
+        /* Border: status color at low opacity; brighter on hover */
+        C4 brd = id_col;
+        brd.a  = (Uint8)(prim>=0 ? 80 + ht*110 : 45 + ht*70);
         bfrr_aa(x, y, GRID_W, GRID_H, R_LG, BRD_T, brd, fill);
     }
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 
-    /* ── 2. GAME NAME — centred in upper zone ───────────────────── */
+    /* ── 2. COLORED TOP ACCENT — 3px strip inside top border ── */
     {
-        C4 tc = lerpc(C_TXT, MK4(255,255,255,255), ht * 0.4f);
-        int nzone_top = y + 10;
-        int nzone_h   = div_y - nzone_top;
-        const char *nm = g->name;
-        int fw = txw_(f14, nm);
+        C4 ac = id_col;
+        ac.a  = (Uint8)(prim>=0 ? 150 + (int)(ht*80) : 55 + (int)(ht*55));
+        /* Clip within the rounded corner so it doesn't poke out */
+        frr_aa(x + BRD_T + R_LG/2, y + BRD_T,
+               GRID_W - BRD_T*2 - R_LG, 3, 1, ac);
+    }
 
-        if(fw <= tw2){
+    /* ── 3. GAME NAME — vertically centred in upper zone ─────── */
+    {
+        /* In galaxy mode boost text opacity so names stay legible */
+        C4 tc = lerpc(C_TXT, MK4(255,255,255,255), ht*0.35f);
+        if(cur_theme == 8) tc.a = (Uint8)(195 + (int)(ht*60));
+
+        int nzone_top = y + 14;
+        int nzone_bot = meta_y - 4;
+        int nzone_h   = nzone_bot - nzone_top;
+        const char *nm = g->name;
+
+        if(txw_(f14, nm) <= tw2){
             int ty = nzone_top + (nzone_h - fh14) / 2;
             rtxcen(f14, nm, x, ty, GRID_W, fh14, tc);
         } else {
+            /* try word-split at last space that fits on one line */
             int nlen = (int)strlen(nm), split = -1;
             for(int k = nlen-1; k > 0; k--){
                 if(nm[k] == ' '){
@@ -2999,122 +3044,119 @@ static void draw_grid_card(int ri, int x, int y){
         }
     }
 
-    /* ── 3. DIVIDER ─────────────────────────────────────────────── */
-    {
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        C4 dl = C_SEP; dl.a = 50;
-        sc_(dl); SDL_RenderDrawLine(ren, x+8, div_y, x+GRID_W-8, div_y);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-    }
-
-    /* ── 4. META — year · genre, centred ───────────────────────── */
+    /* ── 4. META ROW — genre [· genre2] · year, centered ────────
+       Click handler: meta_y2 = cy2+102 = y+102                  */
     {
         char yr_s[8]; snprintf(yr_s, sizeof(yr_s), "%d", g->year);
-        C4 yr_c = (filt_year && g->year==filt_year) ? tintc(C_ACC,1.2f) : C_SUB;
-        int act1g = genre_is_active(g->genre);
-        C4 gc1g   = act1g ? tintc(C_ACC,1.3f) : C_DIM;
-        int sep_w = txw_(f12, " \xC2\xB7 ");
-        int yr_w  = txw_(f12, yr_s);
-        int gw1   = txw_(f12, g->genre);
-        int tot   = yr_w + sep_w + gw1;
-        int gx    = x + (GRID_W - tot) / 2;
+        C4 yr_c  = (filt_year && g->year==filt_year) ? tintc(C_ACC,1.2f) : C_SUB;
+        int act1 = genre_is_active(g->genre);
+        C4  gc1  = act1 ? tintc(C_ACC,1.3f) : C_SUB;
+        int act2 = g->genre2[0] && genre_is_active(g->genre2);
+        C4  gc2  = act2 ? tintc(C_ACC,1.3f) : C_SUB;
+        C4  dotc = C_DIM; dotc.a = 90;
+
+        int gw1 = txw_(f12, g->genre);
+        int sep = txw_(f12, " \xC2\xB7 ");
+        int yrw = txw_(f12, yr_s);
+        int gw2 = g->genre2[0] ? txw_(f12, g->genre2) : 0;
+        int tot = gw1 + (g->genre2[0] ? sep+gw2 : 0) + sep + yrw;
+        int gx  = x + (GRID_W - tot) / 2;
         if(gx < x+6) gx = x+6;
-        C4 dotc = C_DIM; dotc.a = 90;
-        rtxclip(f12, yr_s,          gx,           meta_y, yr_w+1, yr_c);
-        rtx    (f12, " \xC2\xB7 ", gx+yr_w,      meta_y,         dotc);
-        rtxclip(f12, g->genre,      gx+yr_w+sep_w, meta_y, gw1+1, gc1g);
+
+        int cx_m = gx;
+        rtxclip(f12, g->genre, cx_m, meta_y, gw1+1, gc1); cx_m += gw1;
+        if(g->genre2[0]){
+            rtx(f12, " \xC2\xB7 ", cx_m, meta_y, dotc); cx_m += sep;
+            rtxclip(f12, g->genre2, cx_m, meta_y, gw2+1, gc2); cx_m += gw2;
+        }
+        rtx(f12, " \xC2\xB7 ", cx_m, meta_y, dotc); cx_m += sep;
+        rtxclip(f12, yr_s, cx_m, meta_y, yrw+1, yr_c);
     }
 
-    /* ── 5. RATING — if set, below meta ────────────────────────── */
+    /* ── 5. RATING — small centered row below meta ───────────────
+       Click handler: rat_y2 = cy2+102+fh12+4                    */
     if(g->rating > 0){
-        int ry = meta_y + fh12 + 5;
+        int ry2 = meta_y + fh12 + 4;
         char rbuf[8]; snprintf(rbuf, sizeof(rbuf), "%d", g->rating);
         float rt = ((float)g->rating-1.f)/9.f;
-        C4 rc = lerpc(MK4(160,130,0,200), SCOL[S_FAV], rt);
+        C4 rc = lerpc(MK4(150,120,0,185), SCOL[S_FAV], rt);
         if(f_icon){
-            int iw=txw_(f_icon,"\xEE\xA0\xB8"), ih=TTF_FontHeight(f_icon);
-            int bw3=iw+3+txw_(f12,rbuf);
-            int lx3=x+(GRID_W-bw3)/2;
-            rtx(f_icon,"\xEE\xA0\xB8",lx3,ry+(fh12-ih)/2,rc);
-            rtx(f12,rbuf,lx3+iw+3,ry,rc);
+            int iw = txw_(f_icon,"\xEE\xA0\xB8"), ih = TTF_FontHeight(f_icon);
+            int bw3 = iw + 3 + txw_(f12,rbuf);
+            int lx3 = x + (GRID_W - bw3)/2;
+            rtx(f_icon,"\xEE\xA0\xB8", lx3, ry2+(fh12-ih)/2, rc);
+            rtx(f12, rbuf, lx3+iw+3, ry2, rc);
         } else {
             char rs[20]; snprintf(rs,sizeof(rs),"\xe2\x98\x85 %s",rbuf);
-            rtxcen(f12,rs,x,ry,GRID_W,fh12,rc);
+            rtxcen(f12, rs, x, ry2, GRID_W, fh12, rc);
         }
     }
 
-    /* ── 6. NOTES BUTTON — top-right ───────────────────────────── */
-    {
-        int nb=16, nbx=x+GRID_W-nb-5, nby=y+5;
-        int has_note=(g->notes[0]!=0);
-        C4 nb_bg  = lerpc(C_BTNI, has_note?C_ACC:C_SEP, ht*0.5f);
-        C4 nb_brd = lerpc(C_SEP,  has_note?C_ACC:C_SUB, ht*0.6f);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        bfrr_aa(nbx,nby,nb,nb,R_SM,BRD_T,nb_brd,nb_bg);
-        C4 ic2=lerpc(C_DIM,has_note?C_ACC:C_TXT,ht*0.5f);
-        if(f_icon) ric("\xEE\xA1\xB3",nbx+nb/2,nby+nb/2,ic2);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-    }
-
-    /* ── 7. STATUS BUTTON — centred, proper pill button ─────────── */
+    /* ── 6. STATUS CHIP — minimal flat pill ──────────────────────
+       Click handler: chip_y = cy2+GRID_H-GBSZ-5, chip_w=BADGE_W */
     {
         float hv = badge_hov[gi];
         const char *lbl = (prim>=0) ? SNAME[prim+1] : NULL;
-        int iw = (f_icon && prim>=0) ? txw_(f_icon, SICON[prim]) : 0;
-        int lw = lbl ? txw_(f12, lbl) : 0;
+        int chip_x = x + (GRID_W - BADGE_W) / 2;
+        int chip_w = BADGE_W;
 
-        int chip_w;
-        if(iw>0 && lw>0) chip_w = iw + lw + 18;
-        else if(iw>0)     chip_w = iw + 14;
-        else if(lw>0)     chip_w = lw + 18;
-        else              chip_w = 44;
-        if(chip_w > GRID_W - 16) chip_w = GRID_W - 16;
-
-        int chip_x = x + (GRID_W - chip_w) / 2;   /* horizontally centred */
-
+        /* Very subtle fill; color tints in on hover */
         C4 chip_bg, chip_brd;
         if(prim >= 0){
             C4 sc2 = SCOL[prim];
-            if(cur_theme == 8){
-                /* Galaxy: dark bg lets the border carry the color */
-                chip_bg  = lerpc(C_BG, sc2, 0.30f + hv*0.15f); chip_bg.a  = 200;
-                chip_brd = sc2; chip_brd.a = (Uint8)(180 + (int)(hv * 60));
-            } else {
-                chip_bg  = tintc(sc2, 0.25f + hv*0.12f); chip_bg.a  = 210;
-                chip_brd = tintc(sc2, 0.65f + hv*0.20f); chip_brd.a = 220;
-            }
+            chip_bg  = tintc(sc2, 0.15f); chip_bg.a  = (Uint8)(65 + (int)(hv*65));
+            chip_brd = tintc(sc2, 0.55f + hv*0.3f);
+            chip_brd.a = (Uint8)(90 + (int)(hv*130));
         } else {
-            chip_bg  = lerpc(C_BTNI, C_SEP, hv*0.5f); chip_bg.a  = 180;
-            chip_brd = lerpc(C_SEP,  C_SUB, hv*0.6f); chip_brd.a = 160;
+            chip_bg  = C_BTNI; chip_bg.a  = (Uint8)(40 + (int)(hv*45));
+            chip_brd = C_SEP;  chip_brd.a = (Uint8)(55 + (int)(hv*65));
         }
         if(badge_open_gi == gi){
-            chip_brd = (prim>=0) ? tintc(id_col,1.1f) : C_ACC; chip_brd.a = 255;
+            chip_brd = (prim>=0) ? tintc(id_col,1.1f) : C_ACC;
+            chip_brd.a = 220;
+            chip_bg.a  = (Uint8)(chip_bg.a * 1.4f < 255 ? chip_bg.a * 1.4f : 255);
         }
 
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        bfrr_aa(chip_x, chip_y, chip_w, chip_h, chip_h/2, BRD_T, chip_brd, chip_bg);
+        bfrr_aa(chip_x, chip_y, chip_w, chip_h, R_MD, 1, chip_brd, chip_bg);
 
         int cy2 = chip_y + chip_h/2;
-        int tx2 = chip_x + (chip_w - (iw>0&&lw>0 ? iw+lw+4 : iw>0 ? iw : lw)) / 2;
-        C4 lc = (prim>=0) ? tintc(id_col, 1.45f + hv*0.2f)
-                           : lerpc(C_DIM, C_SUB, hv*0.5f);
-        lc.a = 235;
+        int tx2 = chip_x + 8;
+        C4 lc = (prim>=0) ? tintc(id_col, 1.5f + hv*0.3f)
+                           : lerpc(C_DIM, C_SUB, hv*0.6f);
+        lc.a = (Uint8)(160 + (int)(hv*95));
         if(f_icon && prim>=0){
+            int iw = txw_(f_icon, SICON[prim]);
             int ih = TTF_FontHeight(f_icon);
             rtx(f_icon, SICON[prim], tx2, cy2-ih/2, lc);
             tx2 += iw + 4;
         }
         if(lbl){
-            int avail = chip_x + chip_w - 4 - tx2;
+            int avail = chip_x + chip_w - 5 - tx2;
             if(avail > 0) rtxclip(f12, lbl, tx2, cy2-fh12/2, avail, lc);
-        } else if(prim < 0){
+        } else {
             rtxcen(f12, "\xe2\x80\x94", chip_x, chip_y, chip_w, chip_h, lc);
         }
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 
+        /* Store anchor for popup positioning */
         badge_grid_bx = chip_x;
         badge_grid_by = chip_y;
     }
+
+    /* ── 7. NOTES INDICATOR — floating icon, top-right ───────────
+       No button box: just the icon. Appears if has_note or hovering.
+       Click handler: nbx2=cx2+GRID_W-18-4, nby3=cy2+14           */
+    {
+        int has_note = (g->notes[0] != 0);
+        if(has_note || ht > 0.08f){
+            int nb = 18, nbx = x + GRID_W - nb - 4, nby = y + 14;
+            C4 ic2;
+            if(has_note){ ic2 = C_ACC; ic2.a = (Uint8)(120 + (int)(ht*135)); }
+            else         { ic2 = C_SUB; ic2.a = (Uint8)(ht * 160); }
+            if(f_icon) ric("\xEE\xA1\xB3", nbx + nb/2, nby + nb/2, ic2);
+        }
+    }
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
 /* ── Page bar ────────────────────────────────────────────────────── */
@@ -3260,7 +3302,7 @@ static void draw_grid(void){
     int lh=LST_H_;
     SDL_Rect clip={0,LST_Y,win_w,lh};
     SDL_RenderSetClipRect(ren,&clip);
-    { C4 c=C_BG; c.a=(cur_theme==8)?45:148; fblend(0,LST_Y,LIST_W_,lh,c); }
+    { C4 c=C_BG; c.a=(cur_theme==8)?0:148; fblend(0,LST_Y,LIST_W_,lh,c); }
 
     int cols=grid_cols();
     int block_w=cols*(GRID_W+GRID_GAP)-GRID_GAP;
@@ -3583,7 +3625,7 @@ static void note_area(int *ax,int *ay,int *aw,int *ah){
     int ow=NOTE_OW, oh=NOTE_OH;
     int ox=(win_w-ow)/2, oy=(win_h-oh)/2;
     int fh12=TTF_FontHeight(f12), fh18=TTF_FontHeight(f18);
-    int ty=oy+NOTE_PAD+fh18+4+fh12+10+1+8; /* after title+meta+sep */
+    int ty=oy+NOTE_PAD+fh18+4+fh12+10+8; /* title+gap+meta+gap+sep+8 — matches draw_note_overlay */
     *ax=ox+NOTE_PAD; *ay=ty;
     *aw=ow-NOTE_PAD*2; *ah=oh-(ty-oy)-NOTE_PAD;
 }
@@ -3839,12 +3881,15 @@ static void draw_note_overlay(void){
     rtxclip(f18,g->name, ox+NOTE_PAD, ty, ow-NOTE_PAD*2, C_TXT);
     ty+=fh18+4;
 
-    /* meta */
-    { char meta[80];
+    /* meta — show both genres when present, matching list/grid view */
+    { char meta[96];
+      char genre_str[48];
+      if(g->genre2[0]) snprintf(genre_str,sizeof(genre_str),"%s \xc2\xb7 %s",g->genre,g->genre2);
+      else             strncpy(genre_str,g->genre,sizeof(genre_str)-1);
       if(g->rating>0)
-          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d  \xc2\xb7  \xe2\x98\x85 %d/10",g->genre,g->year,g->rating);
+          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d  \xc2\xb7  \xe2\x98\x85 %d/10",genre_str,g->year,g->rating);
       else
-          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d",g->genre,g->year);
+          snprintf(meta,sizeof(meta),"%s  \xc2\xb7  %d",genre_str,g->year);
       rtx(f12,meta, ox+NOTE_PAD, ty, C_SUB); }
     ty+=fh12+10;
 
@@ -4036,7 +4081,7 @@ static void draw_sbar(void){
 static void do_tab(int i){
     cur_tab=(TabId)i; scr_tgt=0; scr_f=0; cur_page=0;
     BADGE_CLOSE_NOW(); /* close popup on tab change */
-    if(i<N_TABS) tab_itx=(float)TAB_X_(tab_disp(i)); /* don't move pill for T_STATS */
+    { int _td=tab_disp(i); if(_td>=0) tab_itx=(float)TAB_X_(_td); /* T_STATS=-1: pill stays */ }
     rebuild();
 }
 static int hit_tab(int mx,int my){
@@ -4122,6 +4167,251 @@ static void init_db(void){
 /* ═══════════════════════════════════════════════════════════════
    MAIN
    ═══════════════════════════════════════════════════════════════ */
+
+/* ── draw_frame: full scene render + present ─────────────────────
+   Called from the main loop AND from WM_PAINT in snap_wndproc so the
+   window redraws correctly during Windows' blocking move/resize loop. */
+static void draw_frame(void){
+    if(!ren) return;
+    draw_background();
+    draw_titlebar();
+    draw_hdr();
+    draw_chips();
+    draw_tabs();
+    draw_list();
+    draw_sbar();
+    draw_badge_popup();
+    draw_cmd_panel();
+    draw_genre_dropdown();
+    draw_note_overlay();
+    draw_tb_tooltips();
+    /* Status tooltip */
+    if(tip_bj>=0 && tip_bj<N_STATUS && note_open<0){
+        int mx_t,my_t; SDL_GetMouseState(&mx_t,&my_t);
+        const char *tname=SNAME[tip_bj+1];
+        int tw2=txw_(f12,tname)+14, th2=TTF_FontHeight(f12)+8;
+        int tx3=mx_t-tw2/2, ty3=my_t-th2-8;
+        if(tx3<4) tx3=4;
+        if(tx3+tw2>win_w-4) tx3=win_w-4-tw2;
+        if(ty3<4) ty3=4;
+        SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
+        C4 tbg={20,20,30,220}; C4 tbrd=C_SEP;
+        bfrr_aa(tx3,ty3,tw2,th2,R_SM,BRD_T,tbrd,tbg);
+        rtxcen(f12,tname,tx3,ty3,tw2,th2,C_TXT);
+        SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+    }
+    SDL_RenderPresent(ren);
+}
+
+/* ═══════════════════════ Windows snap / native-frame ═══════════
+   Placed here — after all globals and #defines are visible.
+   ═══════════════════════════════════════════════════════════════ */
+#ifdef _WIN32
+/* Map a screen-space point to a WM_NCHITTEST return value.
+   Uses only symbols that are defined above this point in the file. */
+static LRESULT win_nchittest(int sx, int sy){
+    SDL_SysWMinfo inf; SDL_VERSION(&inf.version);
+    if(!SDL_GetWindowWMInfo(win, &inf)) return HTCLIENT;
+    HWND hwnd = inf.info.win.window;
+    RECT wr; GetWindowRect(hwnd, &wr);
+    int x = sx - wr.left, y = sy - wr.top;
+    int w = wr.right - wr.left, h = wr.bottom - wr.top;
+
+    /* Resize borders — disabled when maximized */
+    if(!win_maximized){
+        int b = RESIZE_B;
+        if(x<b&&y<b)        return HTTOPLEFT;
+        if(x>=w-b&&y<b)     return HTTOPRIGHT;
+        if(x<b&&y>=h-b)     return HTBOTTOMLEFT;
+        if(x>=w-b&&y>=h-b)  return HTBOTTOMRIGHT;
+        if(x<b)              return HTLEFT;
+        if(x>=w-b)           return HTRIGHT;
+        if(y<b)              return HTTOP;
+        if(y>=h-b)           return HTBOTTOM;
+    }
+
+    /* Title bar — exclude our custom button areas */
+    if(y < TITLE_H){
+        if(x >= w - 3*TB_BTN_W)            return HTCLIENT; /* close/max/min */
+        if(x < CMD_BTN_X + CMD_BTN_W + 4)  return HTCLIENT; /* CMD button    */
+        return HTCAPTION;  /* draggable zone → Windows handles snap */
+    }
+
+    return HTCLIENT;
+}
+
+static LRESULT CALLBACK snap_wndproc(HWND hwnd, UINT msg,
+                                     WPARAM wParam, LPARAM lParam){
+    switch(msg){
+    /* Remove standard chrome — extend client to fill the whole window */
+    case WM_NCCALCSIZE:
+        if(wParam == TRUE) return 0;
+        break;
+
+    /* Set the maximized position/size to the current monitor's work area.
+       Since WM_NCCALCSIZE returns 0 unconditionally (client rect = window rect,
+       no frame trimming), ptMaxPosition and ptMaxSize are used AS-IS for the
+       final client rect — no frame offset math needed. */
+    case WM_GETMINMAXINFO:{
+        MINMAXINFO *mmi = (MINMAXINFO*)lParam;
+        mmi->ptMinTrackSize.x = MIN_W;
+        mmi->ptMinTrackSize.y = MIN_H;
+        HMONITOR hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi; mi.cbSize = sizeof(mi);
+        if(GetMonitorInfo(hmon, &mi)){
+            RECT wa = mi.rcWork;
+            mmi->ptMaxPosition.x = wa.left;
+            mmi->ptMaxPosition.y = wa.top;
+            mmi->ptMaxSize.x     = wa.right  - wa.left;
+            mmi->ptMaxSize.y     = wa.bottom - wa.top;
+        }
+        return 0;
+    }
+
+    /* Native hit-testing: makes drag-to-edge snap and Win+Arrow work */
+    case WM_NCHITTEST:{
+        LRESULT ht = win_nchittest(GET_X_LPARAM(lParam),
+                                   GET_Y_LPARAM(lParam));
+        if(ht != HTCLIENT) return ht;
+        break;
+    }
+
+    /* Suppress native non-client painting — prevents white flash on maximize */
+    case WM_NCPAINT:
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_NCACTIVATE:
+        return TRUE;
+
+    /* Double-click on caption = toggle maximize */
+    case WM_NCLBUTTONDBLCLK:
+        if(wParam == HTCAPTION){ win_snap_max_req = 1; return 0; }
+        break;
+
+    /* Windows snap / drag-from-maximized triggers SC_MAXIMIZE / SC_RESTORE.
+       We must update win_maximized IMMEDIATELY (before calling through) because
+       Windows enters a blocking move loop right after SC_RESTORE — the SDL event
+       pump never runs during that loop, so a deferred flag would never be seen. */
+    case WM_SYSCOMMAND:
+        if((wParam & 0xFFF0) == SC_MAXIMIZE){
+            /* Only save pre_max if not already maximized — toggle_maximize() saves
+               it before calling ShowWindow(SW_MAXIMIZE) which re-triggers SC_MAXIMIZE,
+               and we must not overwrite with the already-maximized rect. */
+            if(!win_maximized){
+                RECT wr2; GetWindowRect(hwnd, &wr2);
+                pre_max_x = wr2.left;   pre_max_y = wr2.top;
+                pre_max_w = wr2.right  - wr2.left;
+                pre_max_h = wr2.bottom - wr2.top;
+            }
+            win_maximized = 1;
+            return CallWindowProcW(g_orig_wndproc, hwnd, msg, wParam, lParam);
+        }
+        if((wParam & 0xFFF0) == SC_RESTORE){
+            win_maximized = 0;
+            return CallWindowProcW(g_orig_wndproc, hwnd, msg, wParam, lParam);
+        }
+        break;
+
+    /* WM_SIZE fires synchronously inside Windows' own drag/move loop,
+       so SDL never gets a chance to deliver SDL_WINDOWEVENT_RESIZED.
+       Sync win_w/win_h/win_maximized immediately so every SDL_RenderPresent
+       called from within the drag (via WM_PAINT) uses correct dimensions. */
+    case WM_SIZE:{
+        int nw = LOWORD(lParam), nh = HIWORD(lParam);
+        if(nw > 0 && nh > 0 && (nw != win_w || nh != win_h)){
+            win_w = nw; win_h = nh;
+            { int _td = tab_disp((int)cur_tab);
+              if(_td >= 0){ tab_ix = tab_itx = (float)TAB_X_(_td); } }
+            rebuild();
+        }
+        /* Do NOT touch win_maximized here.
+           SDL uses SetWindowPos (not ShowWindow) so Windows sends SIZE_RESTORED
+           even when we're "maximizing" via our own toggle_maximize().
+           win_maximized is owned exclusively by toggle_maximize() and the
+           win_snap_max_req handler (for Windows-native snap/restore). */
+        break;
+    }
+
+    /* WM_PAINT fires inside the blocking move loop — draw a fresh frame
+       so the window doesn't show stale content while being dragged/resized. */
+    case WM_PAINT:{
+        anim_tick();
+        draw_frame();
+        ValidateRect(hwnd, NULL);  /* tell Windows the region is handled */
+        return 0;
+    }
+
+    /* Apply the correct window region after EVERY position/size change.
+       Snapped/maximized → no region (square corners flush with screen edge).
+       Floating          → rounded-rect clip.                               */
+    case WM_WINDOWPOSCHANGED:{
+        RECT wr2; GetWindowRect(hwnd, &wr2);
+        int w2 = wr2.right - wr2.left, h2 = wr2.bottom - wr2.top;
+        int flat = win_maximized;
+        if(!flat){
+            HMONITOR hmon2 = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi2; mi2.cbSize = sizeof(mi2);
+            if(GetMonitorInfo(hmon2, &mi2)){
+                RECT wa2 = mi2.rcWork, ma2 = mi2.rcMonitor;
+                if(wr2.left   <= wa2.left   + 2 ||
+                   wr2.top    <= wa2.top    + 2 ||
+                   wr2.right  >= wa2.right  - 2 ||
+                   wr2.bottom >= wa2.bottom - 2 ||
+                   wr2.left   <= ma2.left   + 2 ||
+                   wr2.top    <= ma2.top    + 2 ||
+                   wr2.right  >= ma2.right  - 2 ||
+                   wr2.bottom >= ma2.bottom - 2)
+                    flat = 1;
+            }
+        }
+        if(flat){
+            SetWindowRgn(hwnd, NULL, TRUE);
+        } else {
+            int d = WIN_RGN_R * 2;
+            HRGN rgn = CreateRoundRectRgn(0, 0, w2+1, h2+1, d, d);
+            SetWindowRgn(hwnd, rgn, TRUE);
+        }
+        break;
+    }
+    }
+    return CallWindowProcW(g_orig_wndproc, hwnd, msg, wParam, lParam);
+}
+
+/* Install the subclassed WndProc and enable the DWM drop shadow. */
+static void snap_install(void){
+    SDL_SysWMinfo inf; SDL_VERSION(&inf.version);
+    if(!SDL_GetWindowWMInfo(win, &inf)) return;
+    HWND hwnd = inf.info.win.window;
+
+    /* SDL creates borderless windows as WS_POPUP.  Windows snap does NOT
+       work with WS_POPUP — it only works with overlapped windows.
+       Replace WS_POPUP with WS_OVERLAPPEDWINDOW (which includes
+       WS_CAPTION + WS_THICKFRAME needed by the snap system).
+       WM_NCCALCSIZE returning 0 hides all native chrome, so the window
+       still looks exactly as before — just snappable. */
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    style &= ~WS_POPUP;
+    style |= WS_OVERLAPPEDWINDOW;   /* CAPTION|SYSMENU|THICKFRAME|MIN/MAXBOX */
+    SetWindowLong(hwnd, GWL_STYLE, style);
+
+    /* Subclass — keep the original WndProc for everything we don't handle */
+    g_orig_wndproc = (WNDPROC)(LONG_PTR)
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)snap_wndproc);
+
+    /* Ask DWM to draw a drop shadow so the window isn't flat */
+    MARGINS margins = {0, 0, 0, 1};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+    /* Force WM_NCCALCSIZE to fire so the client area is recalculated
+       and the native chrome disappears immediately */
+    SetWindowPos(hwnd, NULL, 0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
+}
+#endif /* _WIN32 */
+
 int main(int argc,char **argv){
     (void)argc;(void)argv;
 
@@ -4137,6 +4427,9 @@ int main(int argc,char **argv){
     if(!win) return 1;
     SDL_SetWindowMinimumSize(win,MIN_W,MIN_H);
     apply_rgn(win_w,win_h,1);
+#ifdef _WIN32
+    snap_install();   /* subclass WndProc for native snap + resize */
+#endif
 
     ren=SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED|0x00000004);
     if(!ren) return 1;
@@ -4217,6 +4510,16 @@ int main(int argc,char **argv){
 
         needs_redraw = anim_tick();
 
+#ifdef _WIN32
+        /* req==1: double-click on caption (WM_NCLBUTTONDBLCLK).
+           SC_MAXIMIZE and SC_RESTORE now set win_maximized directly in the
+           WndProc so they don't need handling here. */
+        if(win_snap_max_req){
+            int req = win_snap_max_req; win_snap_max_req = 0;
+            if(req == 1) toggle_maximize();
+        }
+#endif
+
         /* Flush deferred save once the debounce window has passed */
         if(save_pending_at && SDL_GetTicks()-save_pending_at >= SAVE_DEFER_MS)
             save_flush();
@@ -4235,19 +4538,19 @@ int main(int argc,char **argv){
                 if(ev.window.event==SDL_WINDOWEVENT_RESIZED||
                    ev.window.event==SDL_WINDOWEVENT_SIZE_CHANGED){
                     SDL_GetWindowSize(win,&win_w,&win_h);
-                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));}
+                    { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } }
                     apply_rgn(win_w,win_h,!win_maximized);
                     rebuild();
                 }
                 if(ev.window.event==SDL_WINDOWEVENT_MAXIMIZED){
                     win_maximized=1; SDL_GetWindowSize(win,&win_w,&win_h);
                     apply_rgn(win_w,win_h,0);
-                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));} rebuild();
+                    { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } } rebuild();
                 }
                 if(ev.window.event==SDL_WINDOWEVENT_RESTORED){
                     win_maximized=0; SDL_GetWindowSize(win,&win_w,&win_h);
                     apply_rgn(win_w,win_h,1);
-                    if(cur_tab<N_TABS){tab_ix=tab_itx=(float)TAB_X_(tab_disp((int)cur_tab));} rebuild();
+                    { int _td=tab_disp((int)cur_tab); if(_td>=0){ tab_ix=tab_itx=(float)TAB_X_(_td); } } rebuild();
                     gal_paused=0;  /* resume galaxy animation on restore */
                 }
                 /* Pause / resume the galaxy background animation so it doesn't
@@ -4271,7 +4574,7 @@ int main(int argc,char **argv){
                                 /* click inside text area → place cursor */
                                 int ax2,ay2,aw2,ah2; note_area(&ax2,&ay2,&aw2,&ah2);
                                 if(mx>=ax2&&mx<ax2+aw2&&my>=ay2&&my<ay2+ah2){
-                                    int tp2=8, tw2=aw2-tp2*2;
+                                    int tp2=12, tw2=aw2-tp2*2;
                                     char *ns2=db[note_open].notes;
                                     int len2=(int)strlen(ns2);
                                     SDL_Keymod km2=SDL_GetModState();
@@ -4332,7 +4635,9 @@ int main(int argc,char **argv){
                                 SDL_GetWindowPosition(win,&rz_wx0,&rz_wy0);
                                 rz_ww0=win_w; rz_wh0=win_h; break;
                             }
-                            if(!win_maximized){ win_drag=1; win_drag_ox=mx; win_drag_oy=my; }
+                            if(!win_maximized){
+                                win_drag=1; win_drag_ox=mx; win_drag_oy=my;
+                            }
                             break;
                         }
 
@@ -4531,6 +4836,7 @@ int main(int argc,char **argv){
                                 } else {
                                     badge_open_gi=gi; badge_open_ri=r;
                                     badge_last_gi=gi; badge_open_vm=VIEW_LIST;
+                                    badge_opens_above=0;
                                     memset(badge_item_hov,0,sizeof(badge_item_hov));
                                 }
                                 sfx_click(); goto done_click;
@@ -4581,16 +4887,19 @@ int main(int argc,char **argv){
                                 int cx2=ox+col2*(GRID_W+GRID_GAP);
                                 int cy2=oy3+row2*(GRID_H+GRID_GAP);
                                 int gbx=cx2+(GRID_W-BADGE_W)/2;
-                                int gby=cy2+GRID_H-GBSZ-4;
+                                int gby=cy2+GRID_H-GBSZ-5;
 
                                 /* ── Badge pill click: open/close popup ── */
-                                if(mx>=gbx&&mx<gbx+BADGE_W&&my>=gby&&my<gby+BADGE_H){
+                                if(mx>=gbx&&mx<gbx+BADGE_W&&my>=gby&&my<gby+GBSZ){
                                     if(badge_open_gi==hov_db){
                                         BADGE_CLOSE();
                                     } else {
                                         badge_open_gi=hov_db; badge_open_ri=ri2;
                                         badge_last_gi=hov_db; badge_open_vm=VIEW_GRID;
                                         badge_grid_bx=gbx; badge_grid_by=gby;
+                                        /* decide direction now, once, and keep it fixed */
+                                        { int py_below = gby + GBSZ + 4;
+                                          badge_opens_above = (py_below + BPOP_H > win_h - SB_H - PG_H) ? 1 : 0; }
                                         memset(badge_item_hov,0,sizeof(badge_item_hov));
                                     }
                                     sfx_click(); goto done_click;
@@ -4606,33 +4915,51 @@ int main(int argc,char **argv){
                                     sfx_click(); srch_blur(); break;
                                 }
 
-                                /* ── Genre / year click — separate rows ── */
+                                /* ── Genre / year click — same meta row as draw ── */
                                 {
                                     Game *gcard = &db[hov_db];
                                     int fh12c = TTF_FontHeight(f12);
-                                    int gnr_by2 = gby - fh12c - 4;         /* genre row */
-                                    int yr_by2  = gnr_by2 - fh12c - 2;     /* year row */
-                                    /* year — full-width centered hit area */
-                                    if(my>=yr_by2 && my<yr_by2+fh12c){
-                                        filt_year = (filt_year==gcard->year) ? 0 : gcard->year;
-                                        update_chip_band(); sfx_click(); rebuild(); break;
-                                    }
-                                    /* genre chips — centered */
-                                    if(my>=gnr_by2 && my<gnr_by2+fh12c){
-                                        int gw1c = txw_(f12,gcard->genre);
-                                        int dot_wc = gcard->genre2[0] ? txw_(f12," \xC2\xB7 ") : 0;
+                                    /* Match draw_grid_card: footer_y = y+96, meta_y = footer_y+6 */
+                                    int meta_y2 = cy2 + 96 + 6; /* = cy2 + 102 */
+                                    /* Year and genre are both on meta_y2; year is on the left */
+                                    if(my >= meta_y2 && my < meta_y2 + fh12c){
+                                        int gw1c  = txw_(f12,gcard->genre);
+                                        int dot_wc= gcard->genre2[0] ? txw_(f12," \xC2\xB7 ") : 0;
                                         int gw2c  = gcard->genre2[0] ? txw_(f12,gcard->genre2) : 0;
-                                        int total_gc = gw1c + dot_wc + gw2c;
-                                        int gxc = cx2 + (GRID_W - total_gc)/2;
+                                        char yr_s2[8]; snprintf(yr_s2,sizeof(yr_s2),"%d",gcard->year);
+                                        int yrw   = txw_(f12,yr_s2);
+                                        int total_gc = yrw + txw_(f12," \xC2\xB7 ") + gw1c + dot_wc + gw2c;
+                                        int gxc   = cx2 + (GRID_W - total_gc)/2;
                                         if(gxc < cx2+4) gxc = cx2+4;
-                                        if(mx>=gxc && mx<gxc+gw1c){
+                                        /* year region */
+                                        if(mx >= gxc && mx < gxc + yrw + (int)txw_(f12," \xC2\xB7 ")/2){
+                                            filt_year = (filt_year==gcard->year) ? 0 : gcard->year;
+                                            update_chip_band(); sfx_click(); rebuild(); break;
+                                        }
+                                        /* genre1 region */
+                                        int genre_start = gxc + yrw + txw_(f12," \xC2\xB7 ");
+                                        if(mx >= genre_start && mx < genre_start + gw1c){
                                             toggle_genre_filter(gcard->genre);
                                             update_chip_band(); sfx_click(); rebuild(); break;
                                         }
-                                        if(gcard->genre2[0] && mx>=gxc+gw1c+dot_wc && mx<gxc+total_gc){
-                                            toggle_genre_filter(gcard->genre2);
-                                            update_chip_band(); sfx_click(); rebuild(); break;
+                                        /* genre2 region */
+                                        if(gcard->genre2[0]){
+                                            int genre2_start = genre_start + gw1c + dot_wc;
+                                            if(mx >= genre2_start && mx < genre2_start + gw2c){
+                                                toggle_genre_filter(gcard->genre2);
+                                                update_chip_band(); sfx_click(); rebuild(); break;
+                                            }
                                         }
+                                    }
+                                }
+                                /* ── Rating row in grid: left-click to cycle (matches list view) ── */
+                                {
+                                    int fh12c2 = TTF_FontHeight(f12);
+                                    int rat_y2  = cy2 + 96 + 6 + fh12c2 + 4;
+                                    if(my >= rat_y2 && my < rat_y2 + fh12c2
+                                       && mx >= cx2 && mx < cx2 + GRID_W){
+                                        db[hov_db].rating = (db[hov_db].rating % 10) + 1;
+                                        sfx_toggle(); save_defer(); break;
                                     }
                                 }
                                 break;
@@ -4658,9 +4985,8 @@ int main(int argc,char **argv){
                             }
                         }
                     } else if(view_mode==VIEW_GRID && hov_db>=0){
-                        /* right-click anywhere on a grid card cycles rating down */
-                        int gi_rc=hov_db;
-                        if(db[gi_rc].rating>0){ db[gi_rc].rating--; sfx_toggle(); save_defer(); }
+                        /* right-click anywhere on a grid card resets rating, same as list view */
+                        if(db[hov_db].rating>0){ db[hov_db].rating=0; sfx_toggle(); save_defer(); }
                     }
                 }
                 break;
@@ -4686,7 +5012,7 @@ int main(int argc,char **argv){
                 /* note drag-select */
                 if(note_drag && note_open>=0){
                     int ax2,ay2,aw2,ah2; note_area(&ax2,&ay2,&aw2,&ah2);
-                    int tp2=8, tw2=aw2-tp2*2;
+                    int tp2=12, tw2=aw2-tp2*2;
                     /* clamp mouse to text area so selection stays sane */
                     int cmx=mx<ax2?ax2:(mx>=ax2+aw2?ax2+aw2-1:mx);
                     int cmy=my<ay2?ay2:(my>=ay2+ah2?ay2+ah2-1:my);
@@ -4985,35 +5311,7 @@ int main(int argc,char **argv){
         }
 
         if(needs_redraw || rz_drag || win_drag || drag_sb || srch_drag || note_open>=0 || note_anim>0.005f || badge_anim>0.005f || cmd_open || cmd_anim>0.005f){
-            draw_background();
-            draw_titlebar();
-            draw_hdr();
-            draw_chips();
-            draw_tabs();
-            draw_list();
-            draw_sbar();
-            draw_badge_popup();        /* status badge popup — below note overlay */
-            draw_cmd_panel();          /* Command Center panel */
-            draw_genre_dropdown();     /* genre list — above panel, below note overlay */
-            draw_note_overlay();       /* overlay — above everything */
-            draw_tb_tooltips();        /* titlebar hover labels     */
-            /* ── Status tooltip ── */
-            if(tip_bj>=0 && tip_bj<N_STATUS && note_open<0){
-                int mx_t,my_t; SDL_GetMouseState(&mx_t,&my_t);
-                const char *tname=SNAME[tip_bj+1]; /* SNAME[0]=All, statuses start at 1 */
-                int tw2=txw_(f12,tname)+14;
-                int th2=TTF_FontHeight(f12)+8;
-                int tx3=mx_t-tw2/2, ty3=my_t-th2-8;
-                if(tx3<4) tx3=4;
-                if(tx3+tw2>win_w-4) tx3=win_w-4-tw2;
-                if(ty3<4) ty3=4;
-                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-                C4 tbg={20,20,30,220}; C4 tbrd=C_SEP;
-                bfrr_aa(tx3,ty3,tw2,th2,R_SM,BRD_T,tbrd,tbg);
-                rtxcen(f12,tname,tx3,ty3,tw2,th2,C_TXT);
-                SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
-            }
-            SDL_RenderPresent(ren);
+            draw_frame();
         }
     }
 

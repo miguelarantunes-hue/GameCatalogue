@@ -50,7 +50,7 @@ void toggle_genre_filter(const char *gen){
 }
 
 void update_chip_band(void){
-    chip_band = (n_filt_genres > 0 || filt_year) ? 26 /* CHIP_H */ : 0;
+    chip_band = (n_filt_genres > 0 || filt_year) ? CHIP_H : 0;
 }
 
 /* ── Genre list builder ───────────────────────────────────────── */

@@ -18,17 +18,23 @@ Uint32 save_pending_at  = 0;
 
 /* ── Path initialisation ──────────────────────────────────────── */
 void init_save_path(void){
+#ifdef _WIN32
     const char *appdata = getenv("APPDATA");
     if(!appdata) appdata = ".";
     snprintf(save_path, sizeof(save_path), "%s\\GameCatalogue", appdata);
-#ifdef _WIN32
     CreateDirectoryA(save_path, NULL);
-#else
-    { char cmd[520]; snprintf(cmd,sizeof(cmd),"mkdir -p \"%s\"",save_path); system(cmd); }
-#endif
     snprintf(save_path + strlen(save_path),
              sizeof(save_path) - strlen(save_path),
              "\\%s", SAVEFILE_NAME);
+#else
+    const char *home = getenv("HOME");
+    if(!home) home = ".";
+    snprintf(save_path, sizeof(save_path), "%s/.config/GameCatalogue", home);
+    { char cmd[520]; snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", save_path); system(cmd); }
+    snprintf(save_path + strlen(save_path),
+             sizeof(save_path) - strlen(save_path),
+             "/%s", SAVEFILE_NAME);
+#endif
 }
 
 /* ── Write ────────────────────────────────────────────────────── */
@@ -45,6 +51,8 @@ void save_d(void){
     /* v2: rating and notes */
     for(int i = 0; i < ndb; i++) fwrite(&db[i].rating, sizeof(int), 1, fp);
     for(int i = 0; i < ndb; i++) fwrite(db[i].notes,   512,         1, fp);
+    /* v3: prev_tab — appended so old saves still load cleanly */
+    fwrite(&prev_tab, sizeof(int), 1, fp);
     fclose(fp);
 }
 
@@ -72,6 +80,8 @@ void load_d(void){
         if(fread(&r, sizeof(int), 1, fp)==1 && r>=0 && r<=10) db[i].rating = r;
     }
     for(int i = 0; i < lim; i++) fread(db[i].notes, 512, 1, fp);
+    /* v3: prev_tab — silently skipped when reading older saves */
+    { int pt = 0; if(fread(&pt, sizeof(int), 1, fp)==1 && pt>=0 && pt<T_STATS) prev_tab=(TabId)pt; }
     fclose(fp);
 }
 

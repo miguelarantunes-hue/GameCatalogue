@@ -12,7 +12,7 @@ set INC=-I"%SDL2%/include" -I"%SDL2%/include/SDL2" ^
 set LIB=-L"%SDL2%/lib" -L"%TTF%/lib"
 
 set FLAGS=-O2 -mwindows
-set LIBS=-lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf
+set LIBS=-lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -ldwmapi
 
 :: ── Compile resource file (icon + version info) ──────────────────
 echo [1/3] Compiling resources...
